@@ -45,7 +45,13 @@ parser = argparse.ArgumentParser(
         will be processed in track mode. If multiple files are given, they
         will be processed in album mode as a single album.
         ''')
-parser.add_argument('-j', '--jobs', type=int, default=multiprocessing.cpu_count(),
+parser.add_argument('-f', '--force', default=False, action='store_true',
+        help='''
+        Recalculate the ReplayGain values even if valid tags are already
+        present in the files.
+        ''')
+parser.add_argument('-j', '--jobs', type=int,
+        default=multiprocessing.cpu_count(),
         help='''
         The number of operations to run in parallel. The default is
         auto-detected, currently %(default)s.
@@ -82,8 +88,6 @@ elif len(args.FILE) > 0:
     args.track.extend(args.FILE)
     args.FILE = None
 
-print(vars(args))
-
 class GainInfo:
     def __init__(self, loudness=None, album_loudness=None,
             peak=None, album_peak=None):
@@ -95,25 +99,25 @@ class GainInfo:
     def __str__(self):
         str = ''
         str += 'Track: '
-        if self.loudness:
+        if self.loudness is None:
+            str += 'I: None'
+        else:
             str += 'I: {:.2f} LUFS'.format(self.loudness)
-        else:
-            str += 'I: None'
         str += ', '
-        if self.peak:
+        if self.peak is None:
+            str += 'Peak: None'
+        else:
             str += 'Peak: {:.2f} dBFS'.format(self.peak)
-        else:
-            str += 'Peak: None'
         str += '; Album: '
-        if self.album_loudness:
-            str += 'I: {:.2f} LUFS'.format(self.album_loudness)
-        else:
+        if self.album_loudness is None:
             str += 'I: None'
-        str += ', '
-        if self.album_peak:
-            str += 'Peak: {:.2f} dBFS'.format(self.album_peak)
         else:
+            str += 'I: {:.2f} LUFS'.format(self.album_loudness)
+        str += ', '
+        if self.album_peak is None:
             str += 'Peak: None'
+        else:
+            str += 'Peak: {:.2f} dBFS'.format(self.album_peak)
         return str
 
 class Tagger:
@@ -165,7 +169,30 @@ class Tagger:
                 self.tags.album_loudness = self.REPLAYGAIN_REF - rva2_a.gain
                 self.tags.album_peak = 20.0 * log10(rva2_a.peak)
 
-        
+        return self.tags
+
+    def read_gain_generic(self):
+        rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
+        if rg_tg is None:
+            rg_tg = self.audio.get('replaygain_track_gain')
+        if rg_tg:
+            self.tags.loudness = self.parse_rg_gain(rg_tg[0])
+        rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
+        if rg_tp is None:
+            rg_tp = self.audio.get('replaygain_track_gain')
+        if rg_tp:
+            self.tags.peak = self.parse_rg_peak(rg_tp[0])
+        rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
+        if rg_ag is None:
+            rg_ag = self.audio.get('replaygain_album_gain')
+        if rg_ag:
+            self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
+        rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
+        if rg_ap is None:
+            rg_ap = self.audio.get('replaygain_album_peak')
+        if rg_ap:
+            self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
+
         return self.tags
 
     def read_gain(self):
@@ -178,33 +205,73 @@ class Tagger:
             return self.read_gain_mp4()
         return self.read_gain_generic()
 
+    def format_rg_gain(self, loudness):
+        return "{:.2f} dB".format(self.REPLAYGAIN_REF - loudness)
+
+    def format_rg_peak(self, peak):
+        return "{:.6f}".format(10.0 ** (peak / 20.0))
+
+    def write_gain_generic(self):
+        # Delete wrong-case and legacy tags
+        if 'replaygain_track_gain' in self.audio:
+            del self.audio['replaygain_track_gain']
+        if 'replaygain_track_peak' in self.audio:
+            del self.audio['replaygain_track_peak']
+        if 'replaygain_album_gain' in self.audio:
+            del self.audio['replaygain_album_gain']
+        if 'replaygain_album_peak' in self.audio:
+            del self.audio['replaygain_album_peak']
+        if 'REPLAYGAIN_REFERENCE_LOUDNESS' in self.audio:
+            del self.audio['REPLAYGAIN_REFERENCE_LOUDNESS']
+        if 'replaygain_reference_loudness' in self.audio:
+            del self.audio['replaygain_reference_loudness']
+
+        self.audio['REPLAYGAIN_TRACK_GAIN'] = \
+                [self.format_rg_gain(self.tags.loudness)]
+        self.audio['REPLAYGAIN_TRACK_PEAK'] = \
+                [self.format_rg_peak(self.tags.peak)]
+        self.audio['REPLAYGAIN_ALBUM_GAIN'] = \
+                [self.format_rg_gain(self.tags.album_loudness)]
+        self.audio['REPLAYGAIN_ALBUM_PEAK'] = \
+                [self.format_rg_peak(self.tags.album_peak)]
+
+        self.audio.save()
+
+    def write_gain(self, tags):
+        self.tags = tags
+        if not self.audio:
+            raise Exception("write_gain called without previous read_gain")
+        if isinstance(self.audio, mutagen.id3.ID3FileType):
+            self.write_gain_id3()
+        if isinstance(self.audio, mutagen.oggopus.OggOpus):
+            self.write_gain_ogg_opus()
+        if isinstance(self.audio, mutagen.mp4.MP4):
+            self.write_gain_mp4()
+        self.write_gain_generic()
+
 class GainScanner:
     i_re = re.compile(r"^\s+I:\s+(-?\d+\.\d+) LUFS$", re.M)
     peak_re = re.compile(r"^\s+Peak:\s+(-?\d+\.\d+) dBFS$", re.M)
 
-    def __init__(self, job_sem):
-        self.job_sem = job_sem
-
     @asyncio.coroutine
     def ffmpeg_parse_ebur128(self, *ff_opts):
-        with (yield from job_sem):
-            ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner',
-                    '-loglevel', 'info'] + list(ff_opts) + ['-f', 'null', '-']
-            ffmpeg = yield from asyncio.create_subprocess_exec(*ff_args,
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE)
-            (_, stderr_data) = yield from ffmpeg.communicate()
-            stderr_str = stderr_data.decode()
+        ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner',
+                '-loglevel', 'info'] + list(ff_opts) + ['-f', 'null', '-']
+        ffmpeg = yield from asyncio.create_subprocess_exec(*ff_args,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE)
+        (_, stderr_data) = yield from ffmpeg.communicate()
+        stderr_str = stderr_data.decode()
 
-            result = GainInfo()
-            m = self.i_re.search(stderr_str)
-            if m:
-                result.loudness = float(m.group(1))
-            m = self.peak_re.search(stderr_str)
-            if m:
-                result.peak = float(m.group(1))
+        result = GainInfo()
+        m = self.i_re.search(stderr_str)
+        if m:
+            result.loudness = float(m.group(1))
+        m = self.peak_re.search(stderr_str)
+        if m:
+            result.peak = float(m.group(1))
 
-            return result
+        return result
 
     @asyncio.coroutine
     def scan_track(self, filename):
@@ -221,63 +288,160 @@ class GainScanner:
             ff_args += ['-i', filename]
         ff_args += ['-filter_complex',
                 'concat=n={}:v=0:a=1,ebur128=framelog=verbose'.format(len(filenames))]
-        print(ff_args)
         result = yield from self.ffmpeg_parse_ebur128(*ff_args)
         return GainInfo(album_loudness=result.loudness, album_peak=result.peak)
 
-class TrackGainScanner:
-    def __init__(self, job_sem):
-        self.gain_scanner = GainScanner(job_sem)
+class Track:
+    def __init__(self, filename, job_sem):
+        self.filename = filename
+        self.job_sem = job_sem
+        self.tagger = Tagger(filename)
+        self.gain = GainInfo()
 
     @asyncio.coroutine
-    def scan_track(self, track):
-        result = yield from self.gain_scanner.scan_track(track)
-        tagger = Tagger(track)
-        tags = tagger.read_gain()
-        print(track)
-        print(tags)
-        print(result)
+    def read_tags(self):
+        with (yield from self.job_sem):
+            loop = asyncio.get_event_loop()
+            self.gain = yield from loop.run_in_executor(None,
+                    self.tagger.read_gain)
 
-    def scan(self, tracks):
-        track_tasks = [self.scan_track(track) for track in tracks]
-        return asyncio.gather(*track_tasks)
+        need_scan = False
+        if self.gain.loudness is None or self.gain.peak is None:
+            need_scan = True
 
-class AlbumGainScanner:
-    def __init__(self, job_sem):
-        self.gain_scanner = GainScanner(job_sem)
+        return need_scan
 
     @asyncio.coroutine
-    def scan_album(self, album):
-        result = yield from self.gain_scanner.scan_album(album['track'])
-        print("Album:")
-        print(result)
+    def scan_gain(self):
+        with (yield from self.job_sem):
+            gain_scanner = GainScanner()
+            self.gain = yield from gain_scanner.scan_track(self.filename)
 
     @asyncio.coroutine
-    def scan_track(self, track):
-        result = yield from self.gain_scanner.scan_track(track)
-        tagger = Tagger(track)
-        tags = tagger.read_gain()
-        print(track)
-        print(tags)
-        print(result)
+    def write_tags(self):
+        with (yield from self.job_sem):
+            loop = asyncio.get_event_loop()
+            yield from loop.run_in_executor(None,
+                    self.tagger.write_gain, self.gain)
 
-    def scan(self, album):
-        album_task = self.scan_album(album)
-        track_tasks = [self.scan_track(track) for track in album['track']]
-        track_tasks += [self.scan_track(track) for track in album['exclude']]
-        return asyncio.gather(album_task, *track_tasks)
+    @asyncio.coroutine
+    def scan(self, force=False):
+        need_scan = yield from self.read_tags()
+
+        if force:
+            need_scan = True
+
+        if not need_scan:
+            print()
+            print(self.filename)
+            print(self.gain)
+            print('Track does not need rescanning.')
+            return
+
+        yield from self.scan_gain()
+
+        print()
+        print(self.filename)
+        print(self.gain)
+
+class AlbumTrack(Track):
+    def __init__(self, filename, job_sem, exclude):
+        super().__init__(filename, job_sem)
+        self.exclude = exclude
+
+class Album:
+    def __init__(self, album_param, job_sem):
+        self.job_sem = job_sem
+
+        self.gain = GainInfo()
+        self.tracks = []
+        for filename in album_param['track']:
+            self.tracks.append(AlbumTrack(filename, job_sem, exclude=False))
+        for filename in album_param['exclude']:
+            self.tracks.append(AlbumTrack(filename, job_sem, exclude=True))
+
+    @asyncio.coroutine
+    def read_tags(self):
+        track_tasks = [track.read_tags() for track in self.tracks]
+        track_need_scans = yield from asyncio.gather(*track_tasks)
+
+        need_scan = False
+        for track, track_need_scan in zip(self.tracks, track_need_scans):
+            if track_need_scan:
+                need_scan = True
+            if self.gain.album_loudness is None:
+                self.gain.album_loudness = track.gain.album_loudness
+            if self.gain.album_loudness != track.gain.album_loudness:
+                need_scan = True
+            if self.gain.album_peak is None:
+                self.gain.album_peak = track.gain.album_peak
+            if self.gain.album_peak != track.gain.album_peak:
+                need_scan = True
+        if self.gain.album_loudness is None or self.gain.album_peak is None:
+            need_scan = True
+
+        return need_scan
+
+    @asyncio.coroutine
+    def scan_album_gain(self):
+        included = [t.filename for t in self.tracks if not t.exclude]
+        with (yield from self.job_sem):
+            gain_scanner = GainScanner()
+            self.gain = yield from gain_scanner.scan_album(included)
+
+    @asyncio.coroutine
+    def scan_gain(self):
+        track_tasks = [track.scan_gain() for track in self.tracks]
+
+        yield from asyncio.gather(self.scan_album_gain(), *track_tasks)
+
+        self.gain.album_peak = max([t.gain.peak for t in self.tracks])
+        for track in self.tracks:
+            track.gain.album_loudness = self.gain.album_loudness
+            track.gain.album_peak = self.gain.album_peak
+
+        return
+
+    @asyncio.coroutine
+    def write_tags(self):
+        track_tasks = [track.write_tags() for track in self.tracks]
+        yield from asyncio.gather(*track_tasks)
+
+    @asyncio.coroutine
+    def scan(self, force=False):
+        need_scan = yield from self.read_tags()
+
+        if force:
+            need_scan = True
+
+        if not need_scan:
+            print()
+            for track in self.tracks:
+                print(track.filename)
+                print(track.gain)
+            print('Album does not need rescanning')
+            return
+
+        yield from self.scan_gain()
+
+        yield from self.write_tags()
+
+        print()
+        for track in self.tracks:
+            print(track.filename)
+            print(track.gain)
 
 loop = asyncio.get_event_loop()
 
 job_sem = asyncio.BoundedSemaphore(args.jobs)
 
-track_scanner = TrackGainScanner(job_sem)
-album_scanner = AlbumGainScanner(job_sem)
+tasks = []
+tracks = [Track(track, job_sem) for track in args.track]
+tasks += [track.scan(force=args.force) for track in tracks]
+albums = [Album(album, job_sem) for album in args.album]
+tasks += [album.scan(force=args.force) for album in albums]
 
-track_task = track_scanner.scan(args.track)
-album_tasks = [album_scanner.scan(album) for album in args.album]
-
-future = asyncio.async(asyncio.gather(track_task, *album_tasks))
+future = asyncio.async(asyncio.gather(*tasks))
 
 loop.run_until_complete(future)
 
