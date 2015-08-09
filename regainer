@@ -6,6 +6,8 @@ import asyncio
 import multiprocessing
 import re
 from collections import deque
+import mutagen
+from math import log10
 
 class AlbumAction(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
@@ -82,9 +84,102 @@ elif len(args.FILE) > 0:
 
 print(vars(args))
 
+class GainInfo:
+    def __init__(self, loudness=None, album_loudness=None,
+            peak=None, album_peak=None):
+        self.loudness = loudness
+        self.album_loudness = album_loudness
+        self.peak = peak
+        self.album_peak = album_peak
+
+    def __str__(self):
+        str = ''
+        str += 'Track: '
+        if self.loudness:
+            str += 'I: {:.2f} LUFS'.format(self.loudness)
+        else:
+            str += 'I: None'
+        str += ', '
+        if self.peak:
+            str += 'Peak: {:.2f} dBFS'.format(self.peak)
+        else:
+            str += 'Peak: None'
+        str += '; Album: '
+        if self.album_loudness:
+            str += 'I: {:.2f} LUFS'.format(self.album_loudness)
+        else:
+            str += 'I: None'
+        str += ', '
+        if self.album_peak:
+            str += 'Peak: {:.2f} dBFS'.format(self.album_peak)
+        else:
+            str += 'Peak: None'
+        return str
+
+class Tagger:
+    REPLAYGAIN_REF = -18.0 # LUFS
+    BS1770_REF = -23.0 # LUFS
+    def __init__(self, filename):
+        self.filename = filename
+        self.tags = GainInfo()
+
+    rg_gain_re = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)")
+    def parse_rg_gain(self, value):
+        m = self.rg_gain_re.match(value)
+        if m:
+            return self.REPLAYGAIN_REF - float(m.group(1))
+        return None
+
+    rg_peak_re = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)")
+    def parse_rg_peak(self, value):
+        m = self.rg_peak_re.match(value)
+        if m:
+            return 20.0 * log10(float(m.group(1)))
+        return None
+        
+
+    def read_gain_id3(self):
+        # Read from the current preferred tags first
+        rg_tg = self.audio.get('TXXX:REPLAYGAIN_TRACK_GAIN')
+        if rg_tg:
+            self.tags.loudness = self.parse_rg_gain(rg_tg.text[0])
+        rg_tp = self.audio.get('TXXX:REPLAYGAIN_TRACK_PEAK')
+        if rg_tp:
+            self.tags.peak = self.parse_rg_peak(rg_tp.text[0])
+        rg_ag = self.audio.get('TXXX:REPLAYGAIN_ALBUM_GAIN')
+        if rg_ag:
+            self.tags.album_loudness = self.parse_rg_gain(rg_ag.text[0])
+        rg_ap = self.audio.get('TXXX:REPLAYGAIN_ALBUM_PEAK')
+        if rg_ap:
+            self.tags.album_peak = self.parse_rg_peak(rg_ap.text[0])
+
+        # Try loading the legacy RVA2 tags if information is missing
+        if not self.tags.loudness:
+            rva2_t = self.audio.get('RVA2:track')
+            if rva2_t and rva2_t.channel == 1:
+                self.tags.loudness = self.REPLAYGAIN_REF - rva2_t.gain
+                self.tags.peak = 20.0 * log10(rva2_t.peak)
+        if not self.tags.album_loudness:
+            rva2_a = self.audio.get('RVA2:album')
+            if rva2_a and rva2_a.channel == 1:
+                self.tags.album_loudness = self.REPLAYGAIN_REF - rva2_a.gain
+                self.tags.album_peak = 20.0 * log10(rva2_a.peak)
+
+        
+        return self.tags
+
+    def read_gain(self):
+        self.audio = mutagen.File(self.filename)
+        if isinstance(self.audio, mutagen.id3.ID3FileType):
+            return self.read_gain_id3()
+        if isinstance(self.audio, mutagen.oggopus.OggOpus):
+            return self.read_gain_ogg_opus()
+        if isinstance(self.audio, mutagen.mp4.MP4):
+            return self.read_gain_mp4()
+        return self.read_gain_generic()
+
 class GainScanner:
     i_re = re.compile(r"^\s+I:\s+(-?\d+\.\d+) LUFS$", re.M)
-    lra_re = re.compile(r"^\s+LRA:\s+(-?\d+\.\d+) LU$", re.M)
     peak_re = re.compile(r"^\s+Peak:\s+(-?\d+\.\d+) dBFS$", re.M)
 
     def __init__(self, job_sem):
@@ -101,16 +196,13 @@ class GainScanner:
             (_, stderr_data) = yield from ffmpeg.communicate()
             stderr_str = stderr_data.decode()
 
-            result = {'i': None, 'lra': None, 'peak': None}
+            result = GainInfo()
             m = self.i_re.search(stderr_str)
             if m:
-                result['i'] = float(m.group(1))
-            m = self.lra_re.search(stderr_str)
-            if m:
-                result['lra'] = float(m.group(1))
+                result.loudness = float(m.group(1))
             m = self.peak_re.search(stderr_str)
             if m:
-                result['peak'] = float(m.group(1))
+                result.peak = float(m.group(1))
 
             return result
 
@@ -131,7 +223,7 @@ class GainScanner:
                 'concat=n={}:v=0:a=1,ebur128=framelog=verbose'.format(len(filenames))]
         print(ff_args)
         result = yield from self.ffmpeg_parse_ebur128(*ff_args)
-        return result
+        return GainInfo(album_loudness=result.loudness, album_peak=result.peak)
 
 class TrackGainScanner:
     def __init__(self, job_sem):
@@ -140,7 +232,10 @@ class TrackGainScanner:
     @asyncio.coroutine
     def scan_track(self, track):
         result = yield from self.gain_scanner.scan_track(track)
+        tagger = Tagger(track)
+        tags = tagger.read_gain()
         print(track)
+        print(tags)
         print(result)
 
     def scan(self, tracks):
@@ -160,7 +255,10 @@ class AlbumGainScanner:
     @asyncio.coroutine
     def scan_track(self, track):
         result = yield from self.gain_scanner.scan_track(track)
+        tagger = Tagger(track)
+        tags = tagger.read_gain()
         print(track)
+        print(tags)
         print(result)
 
     def scan(self, album):
