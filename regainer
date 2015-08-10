@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
 
+# regainer - advanced ReplayGain tagging
+# Copyright Ⓒ 2015 Calvin Walton <calvin.walton@kepstin.ca>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, contact the Free Software Foundation
+# for a copy, or see http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
 import subprocess
 import argparse
 import asyncio
@@ -8,6 +25,7 @@ import re
 from collections import deque
 import mutagen
 from math import log10
+from enum import Enum
 
 class AlbumAction(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
@@ -45,6 +63,11 @@ parser = argparse.ArgumentParser(
         will be processed in track mode. If multiple files are given, they
         will be processed in album mode as a single album.
         ''')
+parser.add_argument('-n', '--dry-run', default=False, action='store_true',
+        help='''
+        Only calculate and display the ReplayGain values; do not actually
+        save the tags in the audio files.
+        ''')
 parser.add_argument('-f', '--force', default=False, action='store_true',
         help='''
         Recalculate the ReplayGain values even if valid tags are already
@@ -76,6 +99,8 @@ parser.add_argument('-e', '--exclude', nargs='+', default=deque(),
         ''')
 parser.add_argument('FILE', nargs='*', default=[], help=argparse.SUPPRESS)
 args = parser.parse_args()
+
+print(args)
 
 # Handle the "loose" arguments, by turning them into tracks or albums
 if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
@@ -120,9 +145,54 @@ class GainInfo:
             str += 'Peak: {:.2f} dBFS'.format(self.album_peak)
         return str
 
+class OggOpusMode(Enum):
+    standard = 1
+    """
+    Write R128 gain tags as specified in the Ogg Opus encapsulation doc.
+
+    This writes the tags R128_TRACK_GAIN and R128_ALBUM_GAIN to the file,
+    and removes any REPLAYGAIN tags that may be present. The R128 gain tags
+    use the EBU R128 -23 LUFS reference level.
+
+    This method is the most standards compliant, but has limited application
+    compatibility.
+    """
+
+    replaygain = 2
+    """
+    Write REPLAYGAIN tags compatible with FLAC, Vorbis, etc.
+
+    This writes the tags REPLAYGAIN_{TRACK,ALBUM}_{GAIN,PEAK} to the file,
+    and removes any R128 gain tags that may be present. The REPLAYGAIN tags
+    use the -18 LUFS reference level from ReplayGain 2.0.
+
+    This method is against the spirit of the specifications, but has good
+    application compatibility (most applications share parsing code between
+    Opus tags and other formats).
+    """
+
+    compatible = 3
+    """
+    Write both R128 gain and REPLAYGAIN tags.
+
+    This writes the tags from both the "standard" and "replaygain" modes at
+    the same time.
+
+    This method is against the spirit of the specifications, but ensures
+    maximum application compatibility. Since the same computed gain value
+    is used to generate both sets of tags (adjusted the the appropriate
+    different reference levels), it doesn't matter which one the application
+    uses - the result will be the same.
+
+    This is the default tagging method.
+    """
+
 class Tagger:
     REPLAYGAIN_REF = -18.0 # LUFS
     BS1770_REF = -23.0 # LUFS
+
+    ogg_opus_mode = OggOpusMode.compatible
+
     def __init__(self, filename):
         self.filename = filename
         self.tags = GainInfo()
@@ -134,12 +204,31 @@ class Tagger:
             return self.REPLAYGAIN_REF - float(m.group(1))
         return None
 
+    def format_rg_gain(self, loudness):
+        return "{:.2f} dB".format(self.REPLAYGAIN_REF - loudness)
+
+
     rg_peak_re = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)")
     def parse_rg_peak(self, value):
         m = self.rg_peak_re.match(value)
         if m:
             return 20.0 * log10(float(m.group(1)))
         return None
+
+    def format_rg_peak(self, peak):
+        return "{:.6f}".format(10.0 ** (peak / 20.0))
+
+    opus_gain_re = re.compile(r"^\s*([+-]?\d{1,5})")
+    def parse_opus_gain(self, value):
+        m = self.opus_gain_re.match(value)
+        if m:
+            return self.BS1770_REF - float(m.group(1)) / 256.0
+
+    def format_opus_gain(self, value):
+        value = int(value * 256.0)
+        if value < -32768 or value > 32767:
+            raise ValueError('Opus gain value out of range')
+        return "{:d}".format(value)
         
 
     def read_gain_id3(self):
@@ -158,12 +247,12 @@ class Tagger:
             self.tags.album_peak = self.parse_rg_peak(rg_ap.text[0])
 
         # Try loading the legacy RVA2 tags if information is missing
-        if not self.tags.loudness:
+        if self.tags.loudness is None:
             rva2_t = self.audio.get('RVA2:track')
             if rva2_t and rva2_t.channel == 1:
                 self.tags.loudness = self.REPLAYGAIN_REF - rva2_t.gain
                 self.tags.peak = 20.0 * log10(rva2_t.peak)
-        if not self.tags.album_loudness:
+        if self.tags.album_loudness is None:
             rva2_a = self.audio.get('RVA2:album')
             if rva2_a and rva2_a.channel == 1:
                 self.tags.album_loudness = self.REPLAYGAIN_REF - rva2_a.gain
@@ -171,27 +260,50 @@ class Tagger:
 
         return self.tags
 
+    def read_gain_ogg_opus(self):
+        if self.tags.loudness is None:
+            r128_tg = self.audio.get('R128_TRACK_GAIN')
+            if r128_tg:
+                self.tags.loudness = self.parse_opus_gain(r128_tg[0])
+                # This is a hack, R128 gain tags don't store peak, but
+                # we want to mark it as valid tag even without the peak
+                if 'REPLAYGAIN_TRACK_PEAK' not in self.audio:
+                    self.tags.peak = float('nan')
+        if self.tags.album_loudness is None:
+            r128_ag = self.audio.get('R128_ALBUM_GAIN')
+            if r128_ag:
+                self.tags.album_loudness = self.parse_opus_gain(r128_ag[0])
+                if 'REPLAYGAIN_ALBUM_PEAK' not in self.audio:
+                    self.tags.album_peak = float('nan')
+
+        # For compatibility, also read the generic tags
+        return self.read_gain_generic()
+
     def read_gain_generic(self):
-        rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
-        if rg_tg is None:
-            rg_tg = self.audio.get('replaygain_track_gain')
-        if rg_tg:
-            self.tags.loudness = self.parse_rg_gain(rg_tg[0])
-        rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
-        if rg_tp is None:
-            rg_tp = self.audio.get('replaygain_track_gain')
-        if rg_tp:
-            self.tags.peak = self.parse_rg_peak(rg_tp[0])
-        rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
-        if rg_ag is None:
-            rg_ag = self.audio.get('replaygain_album_gain')
-        if rg_ag:
-            self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
-        rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
-        if rg_ap is None:
-            rg_ap = self.audio.get('replaygain_album_peak')
-        if rg_ap:
-            self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
+        if self.tags.loudness is None:
+            rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
+            if rg_tg is None:
+                rg_tg = self.audio.get('replaygain_track_gain')
+            if rg_tg:
+                self.tags.loudness = self.parse_rg_gain(rg_tg[0])
+        if self.tags.peak is None:
+            rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
+            if rg_tp is None:
+                rg_tp = self.audio.get('replaygain_track_gain')
+            if rg_tp:
+                self.tags.peak = self.parse_rg_peak(rg_tp[0])
+        if self.tags.album_loudness is None:
+            rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
+            if rg_ag is None:
+                rg_ag = self.audio.get('replaygain_album_gain')
+            if rg_ag:
+                self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
+        if self.tags.album_peak is None:
+            rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
+            if rg_ap is None:
+                rg_ap = self.audio.get('replaygain_album_peak')
+            if rg_ap:
+                self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
 
         return self.tags
 
@@ -205,49 +317,85 @@ class Tagger:
             return self.read_gain_mp4()
         return self.read_gain_generic()
 
-    def format_rg_gain(self, loudness):
-        return "{:.2f} dB".format(self.REPLAYGAIN_REF - loudness)
+    def write_gain_ogg_opus(self):
+        # Delete all tags, particularly needed if switching modes
+        self.write_gain_generic_cleanup()
 
-    def format_rg_peak(self, peak):
-        return "{:.6f}".format(10.0 ** (peak / 20.0))
+        if self.ogg_opus_mode is OggOpusMode.standard or \
+                self.ogg_opus_mode is OggOpusMode.compatible:
+            if self.tags.loudness is not None:
+                self.audio['R128_TRACK_GAIN'] = \
+                        [self.format_opus_gain(self.tags.loudness)]
+            if self.tags.album_loudness is not None:
+                self.audio['R128_ALBUM_GAIN'] = \
+                        [self.format_opus_gain(self.tags.album_loudness)]
+        if self.ogg_opus_mode is OggOpusMode.replaygain or \
+                self.ogg_opus_mode is OggOpusMode.compatible:
+            if self.tags.loudness is not None:
+                self.audio['REPLAYGAIN_TRACK_GAIN'] = \
+                        [self.format_rg_gain(self.tags.loudness)]
+            if self.tags.peak is not None:
+                self.audio['REPLAYGAIN_TRACK_PEAK'] = \
+                        [self.format_rg_peak(self.tags.peak)]
+            if self.tags.album_loudness is not None:
+                self.audio['REPLAYGAIN_ALBUM_GAIN'] = \
+                        [self.format_rg_gain(self.tags.album_loudness)]
+            if self.tags.album_peak is not None:
+                self.audio['REPLAYGAIN_ALBUM_PEAK'] = \
+                        [self.format_rg_peak(self.tags.album_peak)]
 
-    def write_gain_generic(self):
-        # Delete wrong-case and legacy tags
-        if 'replaygain_track_gain' in self.audio:
-            del self.audio['replaygain_track_gain']
-        if 'replaygain_track_peak' in self.audio:
-            del self.audio['replaygain_track_peak']
-        if 'replaygain_album_gain' in self.audio:
-            del self.audio['replaygain_album_gain']
-        if 'replaygain_album_peak' in self.audio:
-            del self.audio['replaygain_album_peak']
+        self.audio.save()
+
+
+    def write_gain_generic_cleanup(self):
+        # Delete the standard tags
+        if 'REPLAYGAIN_TRACK_GAIN' in self.audio:
+            del self.audio['REPLAYGAIN_TRACK_GAIN']
+        if 'REPLAYGAIN_TRACK_PEAK' in self.audio:
+            del self.audio['REPLAYGAIN_TRACK_PEAK']
+        if 'REPLAYGAIN_ALBUM_GAIN' in self.audio:
+            del self.audio['REPLAYGAIN_ALBUM_GAIN']
+        if 'REPLAYGAIN_ALBUM_PEAK' in self.audio:
+            del self.audio['REPLAYGAIN_ALBUM_PEAK']
+        # Delete unusual/old tags
         if 'REPLAYGAIN_REFERENCE_LOUDNESS' in self.audio:
             del self.audio['REPLAYGAIN_REFERENCE_LOUDNESS']
-        if 'replaygain_reference_loudness' in self.audio:
-            del self.audio['replaygain_reference_loudness']
+        # Ogg Opus R128 gain tags (shouldn't ever be in other formats...)
+        if 'R128_TRACK_GAIN' in self.audio:
+            del self.audio['R128_TRACK_GAIN']
+        if 'R128_ALBUM_GAIN' in self.audio:
+            del self.audio['R128_ALBUM_GAIN']
 
-        self.audio['REPLAYGAIN_TRACK_GAIN'] = \
-                [self.format_rg_gain(self.tags.loudness)]
-        self.audio['REPLAYGAIN_TRACK_PEAK'] = \
-                [self.format_rg_peak(self.tags.peak)]
-        self.audio['REPLAYGAIN_ALBUM_GAIN'] = \
-                [self.format_rg_gain(self.tags.album_loudness)]
-        self.audio['REPLAYGAIN_ALBUM_PEAK'] = \
-                [self.format_rg_peak(self.tags.album_peak)]
+    def write_gain_generic(self):
+        self.write_gain_generic_cleanup()
+
+        if self.tags.loudness is not None:
+            self.audio['REPLAYGAIN_TRACK_GAIN'] = \
+                    [self.format_rg_gain(self.tags.loudness)]
+        if self.tags.peak is not None:
+            self.audio['REPLAYGAIN_TRACK_PEAK'] = \
+                    [self.format_rg_peak(self.tags.peak)]
+        if self.tags.album_loudness is not None:
+            self.audio['REPLAYGAIN_ALBUM_GAIN'] = \
+                    [self.format_rg_gain(self.tags.album_loudness)]
+        if self.tags.album_peak is not None:
+            self.audio['REPLAYGAIN_ALBUM_PEAK'] = \
+                    [self.format_rg_peak(self.tags.album_peak)]
 
         self.audio.save()
 
     def write_gain(self, tags):
         self.tags = tags
+        print(self.audio.__class__)
         if not self.audio:
             raise Exception("write_gain called without previous read_gain")
         if isinstance(self.audio, mutagen.id3.ID3FileType):
-            self.write_gain_id3()
+            return self.write_gain_id3()
         if isinstance(self.audio, mutagen.oggopus.OggOpus):
-            self.write_gain_ogg_opus()
+            return self.write_gain_ogg_opus()
         if isinstance(self.audio, mutagen.mp4.MP4):
-            self.write_gain_mp4()
-        self.write_gain_generic()
+            return self.write_gain_mp4()
+        return self.write_gain_generic()
 
 class GainScanner:
     i_re = re.compile(r"^\s+I:\s+(-?\d+\.\d+) LUFS$", re.M)
@@ -325,7 +473,7 @@ class Track:
                     self.tagger.write_gain, self.gain)
 
     @asyncio.coroutine
-    def scan(self, force=False):
+    def scan(self, force=False, skip_save=False):
         need_scan = yield from self.read_tags()
 
         if force:
@@ -339,6 +487,9 @@ class Track:
             return
 
         yield from self.scan_gain()
+
+        if not skip_save:
+            yield from self.write_tags()
 
         print()
         print(self.filename)
@@ -408,7 +559,7 @@ class Album:
         yield from asyncio.gather(*track_tasks)
 
     @asyncio.coroutine
-    def scan(self, force=False):
+    def scan(self, force=False, skip_save=False):
         need_scan = yield from self.read_tags()
 
         if force:
@@ -424,7 +575,8 @@ class Album:
 
         yield from self.scan_gain()
 
-        yield from self.write_tags()
+        if not skip_save:
+            yield from self.write_tags()
 
         print()
         for track in self.tracks:
@@ -437,9 +589,11 @@ job_sem = asyncio.BoundedSemaphore(args.jobs)
 
 tasks = []
 tracks = [Track(track, job_sem) for track in args.track]
-tasks += [track.scan(force=args.force) for track in tracks]
+tasks += [track.scan(force=args.force, skip_save=args.dry_run)
+                for track in tracks]
 albums = [Album(album, job_sem) for album in args.album]
-tasks += [album.scan(force=args.force) for album in albums]
+tasks += [album.scan(force=args.force, skip_save=args.dry_run)
+                for album in albums]
 
 future = asyncio.async(asyncio.gather(*tasks))
 
