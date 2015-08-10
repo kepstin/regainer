@@ -26,6 +26,7 @@ from collections import deque
 import mutagen
 from math import log10
 from enum import Enum
+import sys
 
 class AlbumAction(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
@@ -100,7 +101,7 @@ parser.add_argument('-e', '--exclude', nargs='+', default=deque(),
 parser.add_argument('FILE', nargs='*', default=[], help=argparse.SUPPRESS)
 args = parser.parse_args()
 
-print(args)
+#print(args)
 
 # Handle the "loose" arguments, by turning them into tracks or albums
 if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
@@ -112,6 +113,10 @@ if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
 elif len(args.FILE) > 0:
     args.track.extend(args.FILE)
     args.FILE = None
+
+if len(args.track) == 0 and len(args.album) == 0:
+    parser.print_help()
+    sys.exit(2)
 
 class GainInfo:
     def __init__(self, loudness=None, album_loudness=None,
