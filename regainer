@@ -458,7 +458,6 @@ class Tagger:
 
     def write_gain(self, tags):
         self.tags = tags
-        print(self.audio.__class__)
         if not self.audio:
             raise Exception("write_gain called without previous read_gain")
         if isinstance(self.audio, mutagen.id3.ID3FileType):
