@@ -291,6 +291,39 @@ class Tagger:
         # For compatibility, also read the generic tags
         return self.read_gain_generic()
 
+    def read_gain_mp4(self):
+        # These are the tags used by foobar2000, and are compatible with
+        # rockbox.
+        for tag in self.tags.keys():
+            print(tag)
+        if self.tags.loudness is None:
+            rg_tg = self.audio.tags.get(
+                    '----:com.apple.iTunes:replaygain_track_gain')
+            if rg_tg and rg_tg[0].dataformat == mutagen.mp4.AtomDataType.UTF8:
+                print(rg_tg)
+                self.tags.loudness = self.parse_rg_gain(
+                        rg_tg[0].decode(encoding='UTF-8'))
+        if self.tags.peak is None:
+            rg_tp = self.audio.tags.get(
+                    '----:com.apple.iTunes:replaygain_track_peak')
+            if rg_tp and rg_tp[0].dataformat == mutagen.mp4.AtomDataType.UTF8:
+                self.tags.peak = self.parse_rg_peak(
+                        rg_tp[0].decode(encoding='UTF-8'))
+        if self.tags.album_loudness is None:
+            rg_ag = self.audio.tags.get(
+                    '----:com.apple.iTunes:replaygain_album_gain')
+            if rg_ag and rg_ag[0].dataformat == mutagen.mp4.AtomDataType.UTF8:
+                self.tags.album_loudness = self.parse_rg_gain(
+                        rg_ag[0].decode(encoding='UTF-8'))
+        if self.tags.album_peak is None:
+            rg_ap = self.audio.tags.get(
+                    '----:com.apple.iTunes:replaygain_album_peak')
+            if rg_ap and rg_ap[0].dataformat == mutagen.mp4.AtomDataType.UTF8:
+                self.tags.album_peak = self.parse_rg_peak(
+                        rg_ap[0].decode(encoding='UTF-8'))
+
+        return self.tags
+
     def read_gain_generic(self):
         if self.tags.loudness is None:
             rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
@@ -321,7 +354,7 @@ class Tagger:
 
     def read_gain(self):
         self.audio = mutagen.File(self.filename)
-        if isinstance(self.audio, mutagen.id3.ID3FileType):
+        if isinstance(self.audio.tags, mutagen.id3.ID3):
             return self.read_gain_id3()
         if isinstance(self.audio, mutagen.oggopus.OggOpus):
             return self.read_gain_ogg_opus()
@@ -460,7 +493,7 @@ class Tagger:
         self.tags = tags
         if not self.audio:
             raise Exception("write_gain called without previous read_gain")
-        if isinstance(self.audio, mutagen.id3.ID3FileType):
+        if isinstance(self.audio.tags, mutagen.id3.ID3):
             return self.write_gain_id3()
         if isinstance(self.audio, mutagen.oggopus.OggOpus):
             return self.write_gain_ogg_opus()
