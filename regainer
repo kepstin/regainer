@@ -115,7 +115,7 @@ elif len(args.FILE) > 0:
     args.FILE = None
 
 if len(args.track) == 0 and len(args.album) == 0:
-    parser.print_help()
+    parser.print_usage()
     sys.exit(2)
 
 class GainInfo:
