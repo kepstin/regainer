@@ -34,9 +34,9 @@ class AlbumAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         if namespace.album is None:
             namespace.album = deque()
-        if option_string == '--album':
+        if option_string == '-a' or option_string == '--album':
             namespace.album.append({'track': deque(values), 'exclude': deque()})
-        if option_string == '--exclude':
+        if option_string == '-e' or option_string == '--exclude':
             if len(namespace.album) == 0:
                 if namespace.exclude is None:
                     namespace.exclude = values
