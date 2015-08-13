@@ -710,9 +710,10 @@ class Album:
 
     @asyncio.coroutine
     def scan_gain(self):
+        album_task = asyncio.async(self.scan_album_gain())
         track_tasks = [track.scan_gain() for track in self.tracks]
 
-        yield from asyncio.gather(self.scan_album_gain(), *track_tasks)
+        yield from asyncio.gather(album_task, *track_tasks)
 
         self.gain.album_peak = max([t.gain.peak for t in self.tracks])
         for track in self.tracks:
