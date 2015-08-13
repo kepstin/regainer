@@ -244,7 +244,7 @@ class Tagger:
             return self.R128_REF - float(m.group(1)) / 256.0
 
     def format_opus_gain(self, value):
-        value = int(value * 256.0)
+        value = int((self.R128_REF - value) * 256.0)
         if value < -32768 or value > 32767:
             raise ValueError('Opus gain value out of range')
         return "{:d}".format(value)
