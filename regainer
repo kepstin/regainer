@@ -571,7 +571,7 @@ class GainScanner:
 
     @asyncio.coroutine
     def ffmpeg_parse_ebur128(self, *ff_opts):
-        ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner',
+        ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner', '-vn',
                 '-loglevel', 'info'] + list(ff_opts) + ['-f', 'null', '-']
         ffmpeg = yield from asyncio.create_subprocess_exec(*ff_args,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
