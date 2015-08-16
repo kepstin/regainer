@@ -215,6 +215,8 @@ class Tagger:
     def __init__(self, filename):
         self.filename = filename
         self.tags = GainInfo()
+        self.need_album_update = False
+        self.need_track_update = False
 
     rg_gain_re = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)")
     def parse_rg_gain(self, value):
@@ -251,56 +253,139 @@ class Tagger:
         
 
     def read_gain_id3(self):
+        need_update = False
+        have_replaygain = False
+        have_rva2 = False
+
+        # Load the standard REPLAYGAIN tags first
+        # Case-insensitive matching...
         for tag in self.audio.tags.getall('TXXX'):
             if tag.desc.lower() == 'replaygain_track_gain':
                 if self.tags.loudness is None:
                     self.tags.loudness = self.parse_rg_gain(tag.text[0])
-                continue
-            if tag.desc.lower() == 'replaygain_track_peak':
+                have_replaygain = True
+                if tag.desc != 'REPLAYGAIN_TRACK_GAIN':
+                    need_update = True
+            elif tag.desc.lower() == 'replaygain_track_peak':
                 if self.tags.peak is None:
                     self.tags.peak = self.parse_rg_peak(tag.text[0])
-                continue
-            if tag.desc.lower() == 'replaygain_album_gain':
+                have_replaygain = True
+                if tag.desc != 'REPLAYGAIN_TRACK_PEAK':
+                    need_update = True
+            elif tag.desc.lower() == 'replaygain_album_gain':
                 if self.tags.album_loudness is None:
                     self.tags.album_loudness = self.parse_rg_gain(tag.text[0])
-                continue
-            if tag.desc.lower() == 'replaygain_album_peak':
+                have_replaygain = True
+                if tag.desc != 'REPLAYGAIN_ALBUM_GAIN':
+                    need_update = True
+            elif tag.desc.lower() == 'replaygain_album_peak':
                 if self.tags.album_peak is None:
                     self.tags.album_peak = self.parse_rg_peak(tag.text[0])
-                continue
+                have_replaygain = True
+                if tag.desc != 'REPLAYGAIN_ALBUM_GAIN':
+                    need_update = True
 
         # Try loading the legacy RVA2 tags if information is missing
-        if self.tags.loudness is None or self.tags.peak is None:
-            rva2_t = self.audio.tags.get('RVA2:track')
-            if rva2_t and rva2_t.channel == 1:
+        rva2_t = self.audio.tags.get('RVA2:track')
+        if rva2_t is not None and rva2_t.channel == 1:
+            if self.tags.loudness is None or self.tags.peak is None:
                 self.tags.loudness = self.REPLAYGAIN_REF - rva2_t.gain
                 self.tags.peak = 20.0 * log10(rva2_t.peak)
-        if self.tags.album_loudness is None or self.tags.album_peak is None:
-            rva2_a = self.audio.tags.get('RVA2:album')
-            if rva2_a and rva2_a.channel == 1:
+            have_rva2 = True
+        rva2_a = self.audio.tags.get('RVA2:album')
+        if rva2_a is not None and rva2_a.channel == 1:
+            if self.tags.album_loudness is None or self.tags.album_peak is None:
                 self.tags.album_loudness = self.REPLAYGAIN_REF - rva2_a.gain
                 self.tags.album_peak = 20.0 * log10(rva2_a.peak)
+            have_rva2 = True
 
-        return self.tags
+        if have_rva2 and not (self.id3_mode is ID3Mode.RVA2 or \
+                self.id3_mode is ID3Mode.COMPATIBLE):
+            need_update = True
+        if have_replaygain and not (self.id3_mode is ID3Mode.REPLAYGAIN or \
+                self.id3_mode is ID3Mode.COMPATIBLE):
+            need_update = True
+        if not have_rva2 and (self.id3_mode is ID3Mode.RVA2 or \
+                self.id3_mode is ID3Mode.COMPATIBLE):
+            need_update = True
+        if not have_replaygain and (self.id3_mode is ID3Mode.REPLAYGAIN or \
+                self.id3_mode is ID3Mode.COMPATIBLE):
+            need_update = True
+
+        self.need_track_update = need_update
+        self.need_album_update = need_update
+
+        return
 
     def read_gain_ogg_opus(self):
-        if self.tags.loudness is None:
-            r128_tg = self.audio.get('R128_TRACK_GAIN')
-            if r128_tg:
-                self.tags.loudness = self.parse_opus_gain(r128_tg[0])
-                # This is a hack, R128 gain tags don't store peak, but
-                # we want to mark it as valid tag even without the peak
-                if 'REPLAYGAIN_TRACK_PEAK' not in self.audio:
-                    self.tags.peak = float('nan')
-        if self.tags.album_loudness is None:
-            r128_ag = self.audio.get('R128_ALBUM_GAIN')
-            if r128_ag:
-                self.tags.album_loudness = self.parse_opus_gain(r128_ag[0])
-                if 'REPLAYGAIN_ALBUM_PEAK' not in self.audio:
-                    self.tags.album_peak = float('nan')
+        self.need_update = False
+        self.have_r128 = False
+        self.have_replaygain = False
 
-        # For compatibility, also read the generic tags
-        return self.read_gain_generic()
+        # Read the opus-specific 'R128' tags
+        r128_tg = self.audio.get('R128_TRACK_GAIN')
+        if r128_tg is not None:
+            if self.tags.loudness is None:
+                self.tags.loudness = self.parse_opus_gain(r128_tg[0])
+            have_r128 = True
+        r128_ag = self.audio.get('R128_ALBUM_GAIN')
+        if r128_ag is not None:
+            if self.tags.album_loudness is None:
+                self.tags.album_loudness = self.parse_opus_gain(r128_ag[0])
+            have_r128 = True
+
+        # For compatibility, also read the generic replaygain tags
+        rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
+        if rg_tg is not None:
+            if self.tags.loudness is None:
+                self.tags.loudness = self.parse_rg_gain(rg_tg[0])
+            have_replaygain = True
+        rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
+        if rg_tp is not None:
+            if self.tags.peak is None:
+                self.tags.peak = self.parse_rg_peak(rg_tp[0])
+            have_replaygain = True
+        rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
+        if rg_ag is not None:
+            if self.tags.album_loudness is None:
+                self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
+            have_replaygain = True
+        rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
+        if rg_ap is not None:
+            if self.tags.album_peak is None:
+                self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
+            have_replaygain = True
+
+        # This is a hack, R128 gain tags don't store peak, but
+        # we want to mark it as valid tag even without the peak
+        if have_r128 and self.ogg_opus_mode is OggOpusMode.R128:
+            if self.tags.loudness is not None and \
+                    self.tags.peak is None:
+                self.tags.peak = float('nan')
+            if self.tags.album_loudness is not None and \
+                    self.tags.album_peak is None:
+                self.tags.album_peak = float('nan')
+
+        if have_r128 and not ( \
+                self.ogg_opus_mode is OggOpusMode.R128 or \
+                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+            need_update = True
+        if have_replaygain and not ( \
+                self.ogg_opus_mode is OggOpusMode.REPLAYGAIN or \
+                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+            need_update = True
+        if not have_r128 and ( \
+                self.ogg_opus_mode is OggOpusMode.R128 or \
+                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+            need_update = True
+        if not have_replaygain and ( \
+                self.ogg_opus_mode is OggOpusMode.REPLAYGAIN or \
+                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+            need_update = True
+
+        self.need_track_update = need_update
+        self.need_album_update = need_update
+
 
     def read_gain_mp4(self):
         # These are the tags used by foobar2000, and are compatible with
@@ -342,34 +427,41 @@ class Tagger:
         return self.tags
 
     def read_gain_generic(self):
-        if self.tags.loudness is None:
-            rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
-            if rg_tg:
+        rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
+        if rg_tg is not None:
+            if self.tags.loudness is None:
                 self.tags.loudness = self.parse_rg_gain(rg_tg[0])
-        if self.tags.peak is None:
-            rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
-            if rg_tp:
+        rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
+        if rg_tp is not None:
+            if self.tags.peak is None:
                 self.tags.peak = self.parse_rg_peak(rg_tp[0])
-        if self.tags.album_loudness is None:
-            rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
-            if rg_ag:
+        rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
+        if rg_ag is not None:
+            if self.tags.album_loudness is None:
                 self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
-        if self.tags.album_peak is None:
-            rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
-            if rg_ap:
+        rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
+        if rg_ap is not None:
+            if self.tags.album_peak is None:
                 self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
 
-        return self.tags
-
     def read_gain(self):
+        self.need_track_update = False
+        self.need_album_update = False
         self.audio = mutagen.File(self.filename)
         if isinstance(self.audio.tags, mutagen.id3.ID3):
-            return self.read_gain_id3()
-        if isinstance(self.audio, mutagen.oggopus.OggOpus):
-            return self.read_gain_ogg_opus()
-        if isinstance(self.audio, mutagen.mp4.MP4):
-            return self.read_gain_mp4()
-        return self.read_gain_generic()
+            self.read_gain_id3()
+        elif isinstance(self.audio, mutagen.oggopus.OggOpus):
+            self.read_gain_ogg_opus()
+        elif isinstance(self.audio, mutagen.mp4.MP4):
+            self.read_gain_mp4()
+        else:
+            self.read_gain_generic()
+
+        if self.tags.album_loudness is not None or \
+                self.tags.album_peak is not None:
+            self.need_track_update = True
+
+        return self.tags
 
     def write_gain_id3(self):
         # Delete standard ReplayGain tags
@@ -555,7 +647,7 @@ class Tagger:
 
     def write_gain(self, tags):
         self.tags = tags
-        if not self.audio:
+        if self.audio is None:
             raise Exception("write_gain called without previous read_gain")
         if isinstance(self.audio.tags, mutagen.id3.ID3):
             return self.write_gain_id3()
@@ -621,12 +713,6 @@ class Track:
             self.gain = yield from loop.run_in_executor(None,
                     self.tagger.read_gain)
 
-        need_scan = False
-        if self.gain.loudness is None or self.gain.peak is None:
-            need_scan = True
-
-        return need_scan
-
     @asyncio.coroutine
     def scan_gain(self):
         with (yield from self.job_sem):
@@ -642,26 +728,34 @@ class Track:
 
     @asyncio.coroutine
     def scan(self, force=False, skip_save=False):
-        need_scan = yield from self.read_tags()
+        yield from self.read_tags()
 
+        need_scan = False
+        if self.gain.loudness is None or self.gain.peak is None:
+            need_scan = True
         if force:
             need_scan = True
 
-        if not need_scan:
-            print()
-            print(self.filename)
-            print(self.gain)
-            print('Track does not need rescanning.')
-            return
+        need_save = self.tagger.need_track_update
 
-        yield from self.scan_gain()
+        if need_scan:
+            yield from self.scan_gain()
+            need_save = True
 
-        if not skip_save:
-            yield from self.write_tags()
+        if need_save:
+            if not skip_save:
+                yield from self.write_tags()
 
         print()
         print(self.filename)
         print(self.gain)
+        if need_scan:
+            print("Rescanned loudness")
+        if need_save:
+            if not skip_save:
+                print("Updated tags")
+            else:
+                print("Needs tag update")
 
 class AlbumTrack(Track):
     def __init__(self, filename, job_sem, exclude):
@@ -682,24 +776,7 @@ class Album:
     @asyncio.coroutine
     def read_tags(self):
         track_tasks = [track.read_tags() for track in self.tracks]
-        track_need_scans = yield from asyncio.gather(*track_tasks)
-
-        need_scan = False
-        for track, track_need_scan in zip(self.tracks, track_need_scans):
-            if track_need_scan:
-                need_scan = True
-            if self.gain.album_loudness is None:
-                self.gain.album_loudness = track.gain.album_loudness
-            if self.gain.album_loudness != track.gain.album_loudness:
-                need_scan = True
-            if self.gain.album_peak is None:
-                self.gain.album_peak = track.gain.album_peak
-            if self.gain.album_peak != track.gain.album_peak:
-                need_scan = True
-        if self.gain.album_loudness is None or self.gain.album_peak is None:
-            need_scan = True
-
-        return need_scan
+        yield from asyncio.gather(*track_tasks)
 
     @asyncio.coroutine
     def scan_album_gain(self):
@@ -729,28 +806,46 @@ class Album:
 
     @asyncio.coroutine
     def scan(self, force=False, skip_save=False):
-        need_scan = yield from self.read_tags()
+        yield from self.read_tags()
 
+        need_scan = False
+        for track in self.tracks:
+            if track.gain.loudness is None or track.gain.peak is None:
+                need_scan = True
+            if self.gain.album_loudness is None:
+                self.gain.album_loudness = track.gain.album_loudness
+            if self.gain.album_loudness != track.gain.album_loudness:
+                need_scan = True
+            if self.gain.album_peak is None:
+                self.gain.album_peak = track.gain.album_peak
+            if self.gain.album_peak != track.gain.album_peak:
+                need_scan = True
+        if self.gain.album_loudness is None or self.gain.album_peak is None:
+            need_scan = True
         if force:
             need_scan = True
 
-        if not need_scan:
-            print()
-            for track in self.tracks:
-                print(track.filename)
-                print(track.gain)
-            print('Album does not need rescanning')
-            return
+        need_save = any([track.tagger.need_album_update for track in self.tracks])
 
-        yield from self.scan_gain()
+        if need_scan:
+            yield from self.scan_gain()
+            need_save = True
 
-        if not skip_save:
-            yield from self.write_tags()
+        if need_save:
+            if not skip_save:
+                yield from self.write_tags()
 
         print()
         for track in self.tracks:
             print(track.filename)
             print(track.gain)
+        if need_scan:
+            print("Rescanned loudness")
+        if need_save:
+            if not skip_save:
+                print("Updated tags")
+            else:
+                print("Needs tag update")
 
 loop = asyncio.get_event_loop()
 
