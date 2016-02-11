@@ -318,9 +318,9 @@ class Tagger:
         return
 
     def read_gain_ogg_opus(self):
-        self.need_update = False
-        self.have_r128 = False
-        self.have_replaygain = False
+        need_update = False
+        have_r128 = False
+        have_replaygain = False
 
         # Read the opus-specific 'R128' tags
         r128_tg = self.audio.get('R128_TRACK_GAIN')
@@ -669,15 +669,17 @@ class GainScanner:
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE)
         (_, stderr_data) = yield from ffmpeg.communicate()
-        stderr_str = stderr_data.decode()
 
         result = GainInfo()
-        m = self.i_re.search(stderr_str)
-        if m:
-            result.loudness = float(m.group(1))
-        m = self.peak_re.search(stderr_str)
-        if m:
-            result.peak = float(m.group(1))
+        for line_bytes in stderr_data.splitlines():
+            line_str = line_bytes.decode()
+
+            m = self.i_re.search(line_str)
+            if m:
+                result.loudness = float(m.group(1))
+            m = self.peak_re.search(line_str)
+            if m:
+                result.peak = float(m.group(1))
 
         return result
 
