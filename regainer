@@ -318,9 +318,9 @@ class Tagger:
         return
 
     def read_gain_ogg_opus(self):
-        self.need_update = False
-        self.have_r128 = False
-        self.have_replaygain = False
+        need_update = False
+        have_r128 = False
+        have_replaygain = False
 
         # Read the opus-specific 'R128' tags
         r128_tg = self.audio.get('R128_TRACK_GAIN')
