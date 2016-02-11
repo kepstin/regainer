@@ -669,15 +669,17 @@ class GainScanner:
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE)
         (_, stderr_data) = yield from ffmpeg.communicate()
-        stderr_str = stderr_data.decode()
 
         result = GainInfo()
-        m = self.i_re.search(stderr_str)
-        if m:
-            result.loudness = float(m.group(1))
-        m = self.peak_re.search(stderr_str)
-        if m:
-            result.peak = float(m.group(1))
+        for line_bytes in stderr_data.splitlines():
+            line_str = line_bytes.decode()
+
+            m = self.i_re.search(line_str)
+            if m:
+                result.loudness = float(m.group(1))
+            m = self.peak_re.search(line_str)
+            if m:
+                result.peak = float(m.group(1))
 
         return result
 
