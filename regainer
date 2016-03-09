@@ -517,7 +517,7 @@ class Tagger:
             if self.tags.album_loudness is not None and \
                     self.tags.album_peak is not None:
                 self.audio.tags.add(mutagen.id3.RVA2(
-                    desc='track',
+                    desc='album',
                     channel=1,
                     gain=self.REPLAYGAIN_REF - self.tags.album_loudness,
                     peak=10.00 ** (self.tags.album_peak / 20.0)))
