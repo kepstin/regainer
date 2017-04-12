@@ -457,6 +457,9 @@ class Tagger:
                 self.audio.tags is None:
             self.audio.add_tags()
 
+        if self.audio.tags is None:
+            raise Exception("Unable to determine tag format for file: {}".format(self.filename))
+
         if isinstance(self.audio.tags, mutagen.id3.ID3):
             self.read_gain_id3()
         elif isinstance(self.audio, mutagen.oggopus.OggOpus):
