@@ -697,7 +697,7 @@ class GainScanner:
 
     @asyncio.coroutine
     def scan_track(self, filename):
-        result = yield from self.ffmpeg_parse_ebur128('-i', filename,
+        result = yield from self.ffmpeg_parse_ebur128('-i', 'file:' + filename,
                 '-filter_complex', 'ebur128=framelog=verbose:peak=true')
         return result
 
@@ -707,7 +707,7 @@ class GainScanner:
             raise ValueError("filenames is empty")
         ff_args = []
         for filename in filenames:
-            ff_args += ['-i', filename]
+            ff_args += ['-i', 'file:' + filename]
         ff_args += ['-filter_complex',
                 'concat=n={}:v=0:a=1,ebur128=framelog=verbose'.format(len(filenames))]
         result = yield from self.ffmpeg_parse_ebur128(*ff_args)
