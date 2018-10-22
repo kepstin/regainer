@@ -801,7 +801,7 @@ class Album:
 
     @asyncio.coroutine
     def scan_gain(self):
-        album_task = asyncio.async(self.scan_album_gain())
+        album_task = asyncio.ensure_future(self.scan_album_gain())
         track_tasks = [track.scan_gain() for track in self.tracks]
 
         yield from asyncio.gather(album_task, *track_tasks)
@@ -873,7 +873,7 @@ albums = [Album(album, job_sem) for album in args.album]
 tasks += [album.scan(force=args.force, skip_save=args.dry_run)
                 for album in albums]
 
-future = asyncio.async(asyncio.gather(*tasks))
+future = asyncio.ensure_future(asyncio.gather(*tasks))
 
 loop.run_until_complete(future)
 
