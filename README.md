@@ -79,6 +79,15 @@ to recalculate using the EBU R128 algorithm.
 use all CPUs available on the system. You can use this to reduce the amount
 of CPU that regainer will use.
 
+## License
+
+regainer is released under the terms of the MIT license; see the file
+[COPYING](COPYING) for the license text. This is a very simple non-copyleft
+license, but note that the dependencies of regainer may have different licenses.
+
+I encourage developers of music tagging applications to reference or use
+regainer code to improve their support for ReplayGain tags.
+
 ## Format-specific Notes
 
 ### Flac
