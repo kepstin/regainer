@@ -8,16 +8,16 @@ wrote regainer.
 regainer writes ReplayGain tags compatible with the
 [ReplayGain 2.0](https://wiki.hydrogenaud.io/index.php?title=ReplayGain_2.0_specification)
 proposed specification. The tags written by regainer are compatible with a
-wide variety of players that support ReplayGain. It does this by writing
-multiple formats of ReplayGain tags within the same file for file types like
-mp3 which have multiple ways of storing ReplayGain information.
+wide variety of players, even older players. It does this by writing
+multiple formats of tags within the same file for file types like
+mp3 which have multiple ways to store ReplayGain information.
 
 If you find a player that is not compatible with tags written by regainer,
 please let me know by filing an issue on Github.
 
 ## Requirements
 
-regainer is written in Python 3. It should work with Python 3.5 and any later
+regainer is written in Python 3. It should work with Python 3.4 and any later
 release. In addition to Python, you will need the following:
 
 - [mutagen](https://mutagen.readthedocs.io/), a Python library that can read
@@ -35,8 +35,8 @@ file:
 $ regainer track.mp3
 ```
 
-or to add both track and album (aka “audiophile”) ReplayGain tags to all the
-tracks in an album:
+Or you can add both track and album (aka “audiophile”) ReplayGain tags to all
+the tracks in an album:
 
 ```
 $ regainer Album/*.opus
@@ -44,7 +44,7 @@ $ regainer Album/*.opus
 
 You can mix and match different modes by specifying the `-a` and `-t` options.
 Using `-a` starts a new album, and using `-t` disables album processing for
-the following tracks. You can use `-t` if you want to add track ReplayGain
+the following tracks. You can use `-t` if you want to add only track ReplayGain
 tags to several files at the same time.
 
 ```
@@ -56,7 +56,7 @@ $ regainer -a Album1/*.ogg \
 In some cases, you might want to process gain for a complete album, but exclude
 certain tracks from being included in the calculated album gain value - for
 example, there might be some karaoke song versions, drama or interview tracks,
-etc. You can use the -e option to to this.
+etc. You can use the -e option to do this.
 
 In this example, the album gain tag will be written to all 4 tracks, but only
 tracks 1 and 2 will be used to calculate the album gain:
