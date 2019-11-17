@@ -1,4 +1,4 @@
-# regainer is an Advanced ReplayGain scanner
+# regainer is an Advanced ReplayGain scanner and tagger
 
 I wanted a simple-to-use tool that can apply ReplayGain compatible tags to a
 wide variety of audio files - even mixing and matching different file types,
