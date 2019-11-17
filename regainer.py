@@ -21,6 +21,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+"""Advanced ReplayGain scanner and tagger"""
+
+__version__ = "1.0.0"
+
 import subprocess
 import argparse
 import asyncio
@@ -58,69 +62,6 @@ class TrackAction(argparse.Action):
         else:
             namespace.track.extend(values)
 
-parser = argparse.ArgumentParser(
-        description='''
-        Add ReplayGain tags to files using the EBU R128 algorithm.
-        ''',
-        epilog='''
-        If neither --track or --album are specified, the mode used depends on
-        the number of files given as arguments. If a single file is given, it
-        will be processed in track mode. If multiple files are given, they
-        will be processed in album mode as a single album.
-        ''')
-parser.add_argument('-n', '--dry-run', default=False, action='store_true',
-        help='''
-        Only calculate and display the ReplayGain values; do not actually
-        save the tags in the audio files.
-        ''')
-parser.add_argument('-f', '--force', default=False, action='store_true',
-        help='''
-        Recalculate the ReplayGain values even if valid tags are already
-        present in the files.
-        ''')
-parser.add_argument('-j', '--jobs', type=int,
-        default=multiprocessing.cpu_count(),
-        help='''
-        The number of operations to run in parallel. The default is
-        auto-detected, currently %(default)s.
-        ''')
-parser.add_argument('-t', '--track', nargs='+', default=deque(),
-        metavar='FILE', action=TrackAction,
-        help='''
-        Treat the following audio files as individual tracks.
-        ''')
-parser.add_argument('-a', '--album', nargs='+', default=deque(),
-        metavar='FILE', action=AlbumAction,
-        help='''
-        Treat the following audio files as part of the same album.
-        Each time the --album option is specified, it starts a new album.
-        ''')
-parser.add_argument('-e', '--exclude', nargs='+', default=deque(),
-        metavar='FILE', action=AlbumAction,
-        help='''
-        Tag the following files as part of the current album, but do not
-        use their audio when calculating the value for the album ReplayGain
-        tag.
-        ''')
-parser.add_argument('FILE', nargs='*', default=[], help=argparse.SUPPRESS)
-args = parser.parse_args()
-
-print(args)
-
-# Handle the "loose" arguments, by turning them into tracks or albums
-if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
-    # Treat the initial arguments as an album
-    args.album.appendleft(
-            {'track': deque(args.FILE), 'exclude': deque(args.exclude)})
-    args.FILE = None
-    args.exclude = None
-elif len(args.FILE) > 0:
-    args.track.extend(args.FILE)
-    args.FILE = None
-
-if len(args.track) == 0 and len(args.album) == 0:
-    parser.print_usage()
-    sys.exit(2)
 
 class GainInfo:
     def __init__(self, loudness=None, album_loudness=None,
@@ -457,7 +398,7 @@ class Tagger:
                 self.audio.tags is None:
             self.audio.add_tags()
 
-        if self.audio.tags is None:
+        if self.audio is None or self.audio.tags is None:
             raise Exception("Unable to determine tag format for file: {}".format(self.filename))
 
         if isinstance(self.audio.tags, mutagen.id3.ID3):
@@ -673,14 +614,13 @@ class GainScanner:
     i_re = re.compile(r"^\s+I:\s+(-?\d+\.\d+) LUFS$", re.M)
     peak_re = re.compile(r"^\s+Peak:\s+(-?\d+\.\d+) dBFS$", re.M)
 
-    @asyncio.coroutine
-    def ffmpeg_parse_ebur128(self, *ff_opts):
+    async def ffmpeg_parse_ebur128(self, *ff_opts):
         ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner', '-vn',
                 '-loglevel', 'info'] + list(ff_opts) + ['-f', 'null', '-']
-        ffmpeg = yield from asyncio.create_subprocess_exec(*ff_args,
+        ffmpeg = await asyncio.create_subprocess_exec(*ff_args,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE)
-        (_, stderr_data) = yield from ffmpeg.communicate()
+        (_, stderr_data) = await ffmpeg.communicate()
 
         result = GainInfo()
         for line_bytes in stderr_data.splitlines():
@@ -695,22 +635,21 @@ class GainScanner:
 
         return result
 
-    @asyncio.coroutine
-    def scan_track(self, filename):
-        result = yield from self.ffmpeg_parse_ebur128('-i', 'file:' + filename,
-                '-filter_complex', 'ebur128=framelog=verbose:peak=true')
+    async def scan_track(self, filename):
+        result = await self.ffmpeg_parse_ebur128('-i', 'file:' + filename,
+                '-filter_complex', 'ebur128=framelog=verbose:peak=true[out]', '-map', '[out]')
         return result
 
-    @asyncio.coroutine
-    def scan_album(self, filenames):
+    async def scan_album(self, filenames):
         if len(filenames) == 0:
             raise ValueError("filenames is empty")
         ff_args = []
         for filename in filenames:
             ff_args += ['-i', 'file:' + filename]
         ff_args += ['-filter_complex',
-                'concat=n={}:v=0:a=1,ebur128=framelog=verbose'.format(len(filenames))]
-        result = yield from self.ffmpeg_parse_ebur128(*ff_args)
+                'concat=n={}:v=0:a=1,ebur128=framelog=verbose[out]'.format(len(filenames)),
+                '-map', '[out]']
+        result = await self.ffmpeg_parse_ebur128(*ff_args)
         return GainInfo(album_loudness=result.loudness, album_peak=result.peak)
 
 class Track:
@@ -720,29 +659,23 @@ class Track:
         self.tagger = Tagger(filename)
         self.gain = GainInfo()
 
-    @asyncio.coroutine
-    def read_tags(self):
-        with (yield from self.job_sem):
+    async def read_tags(self):
+        async with self.job_sem:
             loop = asyncio.get_event_loop()
-            self.gain = yield from loop.run_in_executor(None,
-                    self.tagger.read_gain)
+            self.gain = await loop.run_in_executor(None, self.tagger.read_gain)
 
-    @asyncio.coroutine
-    def scan_gain(self):
-        with (yield from self.job_sem):
+    async def scan_gain(self):
+        async with self.job_sem:
             gain_scanner = GainScanner()
-            self.gain = yield from gain_scanner.scan_track(self.filename)
+            self.gain = await gain_scanner.scan_track(self.filename)
 
-    @asyncio.coroutine
-    def write_tags(self):
-        with (yield from self.job_sem):
+    async def write_tags(self):
+        async with self.job_sem:
             loop = asyncio.get_event_loop()
-            yield from loop.run_in_executor(None,
-                    self.tagger.write_gain, self.gain)
+            await loop.run_in_executor(None, self.tagger.write_gain, self.gain)
 
-    @asyncio.coroutine
-    def scan(self, force=False, skip_save=False):
-        yield from self.read_tags()
+    async def scan(self, force=False, skip_save=False):
+        await self.read_tags()
 
         need_scan = False
         if self.gain.loudness is None or self.gain.peak is None:
@@ -753,12 +686,12 @@ class Track:
         need_save = self.tagger.need_track_update
 
         if need_scan:
-            yield from self.scan_gain()
+            await self.scan_gain()
             need_save = True
 
         if need_save:
             if not skip_save:
-                yield from self.write_tags()
+                await self.write_tags()
 
         print()
         print(self.filename)
@@ -787,40 +720,33 @@ class Album:
         for filename in album_param['exclude']:
             self.tracks.append(AlbumTrack(filename, job_sem, exclude=True))
 
-    @asyncio.coroutine
-    def read_tags(self):
+    async def read_tags(self):
         track_tasks = [track.read_tags() for track in self.tracks]
-        yield from asyncio.gather(*track_tasks)
+        await asyncio.gather(*track_tasks)
 
-    @asyncio.coroutine
-    def scan_album_gain(self):
+    async def scan_album_gain(self):
         included = [t.filename for t in self.tracks if not t.exclude]
-        with (yield from self.job_sem):
+        async with self.job_sem:
             gain_scanner = GainScanner()
-            self.gain = yield from gain_scanner.scan_album(included)
+            self.gain = await gain_scanner.scan_album(included)
 
-    @asyncio.coroutine
-    def scan_gain(self):
+    async def scan_gain(self):
         album_task = asyncio.ensure_future(self.scan_album_gain())
         track_tasks = [track.scan_gain() for track in self.tracks]
 
-        yield from asyncio.gather(album_task, *track_tasks)
+        await asyncio.gather(album_task, *track_tasks)
 
         self.gain.album_peak = max([t.gain.peak for t in self.tracks])
         for track in self.tracks:
             track.gain.album_loudness = self.gain.album_loudness
             track.gain.album_peak = self.gain.album_peak
 
-        return
-
-    @asyncio.coroutine
-    def write_tags(self):
+    async def write_tags(self):
         track_tasks = [track.write_tags() for track in self.tracks]
-        yield from asyncio.gather(*track_tasks)
+        await asyncio.gather(*track_tasks)
 
-    @asyncio.coroutine
-    def scan(self, force=False, skip_save=False):
-        yield from self.read_tags()
+    async def scan(self, force=False, skip_save=False):
+        await self.read_tags()
 
         need_scan = False
         for track in self.tracks:
@@ -842,12 +768,12 @@ class Album:
         need_save = any([track.tagger.need_album_update for track in self.tracks])
 
         if need_scan:
-            yield from self.scan_gain()
+            await self.scan_gain()
             need_save = True
 
         if need_save:
             if not skip_save:
-                yield from self.write_tags()
+                await self.write_tags()
 
         print()
         for track in self.tracks:
@@ -861,22 +787,87 @@ class Album:
             else:
                 print("Needs tag update")
 
-loop = asyncio.get_event_loop()
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+            description='''
+            Add ReplayGain tags to files using the EBU R128 algorithm.
+            ''',
+            epilog='''
+            If neither --track or --album are specified, the mode used depends on
+            the number of files given as arguments. If a single file is given, it
+            will be processed in track mode. If multiple files are given, they
+            will be processed in album mode as a single album.
+            ''')
+    parser.add_argument('-n', '--dry-run', default=False, action='store_true',
+            help='''
+            Only calculate and display the ReplayGain values; do not actually
+            save the tags in the audio files.
+            ''')
+    parser.add_argument('-f', '--force', default=False, action='store_true',
+            help='''
+            Recalculate the ReplayGain values even if valid tags are already
+            present in the files.
+            ''')
+    parser.add_argument('-j', '--jobs', type=int,
+            default=multiprocessing.cpu_count(),
+            help='''
+            The number of operations to run in parallel. The default is
+            auto-detected, currently %(default)s.
+            ''')
+    parser.add_argument('-t', '--track', nargs='+', default=deque(),
+            metavar='FILE', action=TrackAction,
+            help='''
+            Treat the following audio files as individual tracks.
+            ''')
+    parser.add_argument('-a', '--album', nargs='+', default=deque(),
+            metavar='FILE', action=AlbumAction,
+            help='''
+            Treat the following audio files as part of the same album.
+            Each time the --album option is specified, it starts a new album.
+            ''')
+    parser.add_argument('-e', '--exclude', nargs='+', default=deque(),
+            metavar='FILE', action=AlbumAction,
+            help='''
+            Tag the following files as part of the current album, but do not
+            use their audio when calculating the value for the album ReplayGain
+            tag.
+            ''')
+    parser.add_argument('FILE', nargs='*', default=[], help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
 
-job_sem = asyncio.BoundedSemaphore(args.jobs)
+    # Handle the "loose" arguments, by turning them into tracks or albums
+    if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
+        # Treat the initial arguments as an album
+        args.album.appendleft(
+                {'track': deque(args.FILE), 'exclude': deque(args.exclude)})
+        args.FILE = None
+        args.exclude = None
+    elif len(args.FILE) > 0:
+        args.track.extend(args.FILE)
+        args.FILE = None
 
-tasks = []
-tracks = [Track(track, job_sem) for track in args.track]
-tasks += [track.scan(force=args.force, skip_save=args.dry_run)
-                for track in tracks]
-albums = [Album(album, job_sem) for album in args.album]
-tasks += [album.scan(force=args.force, skip_save=args.dry_run)
-                for album in albums]
+    if len(args.track) == 0 and len(args.album) == 0:
+        parser.print_usage()
+        sys.exit(2)
+    loop = asyncio.get_event_loop()
 
-future = asyncio.ensure_future(asyncio.gather(*tasks))
+    job_sem = asyncio.BoundedSemaphore(args.jobs)
 
-loop.run_until_complete(future)
+    tasks = []
+    albums = [Album(album, job_sem) for album in args.album]
+    tasks += [album.scan(force=args.force, skip_save=args.dry_run)
+                    for album in albums]
+    tracks = [Track(track, job_sem) for track in args.track]
+    tasks += [track.scan(force=args.force, skip_save=args.dry_run)
+                    for track in tracks]
 
-future.result()
+    future = asyncio.ensure_future(asyncio.gather(*tasks))
 
-loop.close()
+    loop.run_until_complete(future)
+
+    future.result()
+
+    loop.close()
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["flit"]
+build-backend = "flit.buildapi"
+
+[tool.flit.metadata]
+module = "regainer"
+author = "Calvin Walton"
+author-email = "calvin.walton@kepstin.ca"
+home-page = "https://github.com/kepstin/regainer"
+requires = [
+    "mutagen ~= 1.27",
+]
+requires-python = "~= 3.5"
+description-file = "README.md"
+
+[tool.flit.scripts]
+regainer = "regainer:main"
