@@ -87,6 +87,10 @@ tags are already present in the files. If you have files which had loudness
 levels calculated using the old ReplayGain algorithm, you can use this option
 to recalculate using the EBU R128 algorithm.
 
+`-p`/`--preserve-album-gain` causes regainer to preserve existing album gain.
+This is useful if you for example have multi-disc albums that have discs mastered
+at different loudness levels. NOTE: Using `-f` overrides this argument.
+
 `-j N` specifies the number of parallel jobs to run. By default it will
 use all CPUs available on the system. You can use this to reduce the amount
 of CPU that regainer will use.
