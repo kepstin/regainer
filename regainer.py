@@ -195,7 +195,7 @@ class Tagger:
         if value < -32768 or value > 32767:
             raise ValueError('Opus gain value out of range')
         return "{:d}".format(value)
-        
+
 
     def read_gain_id3(self):
         need_update = False
@@ -730,13 +730,18 @@ class Album:
             gain_scanner = GainScanner()
             self.gain = await gain_scanner.scan_album(included)
 
-    async def scan_gain(self):
-        album_task = asyncio.ensure_future(self.scan_album_gain())
-        track_tasks = [track.scan_gain() for track in self.tracks]
+    async def scan_gain(self, skip_album_scan=False):
+        tasks = [track.scan_gain() for track in self.tracks]
 
-        await asyncio.gather(album_task, *track_tasks)
+        if not skip_album_scan:
+            album_task = asyncio.ensure_future(self.scan_album_gain())
+            tasks.append(album_task)
 
-        self.gain.album_peak = max([t.gain.peak for t in self.tracks])
+        await asyncio.gather(*tasks)
+
+        if not skip_album_scan:
+            self.gain.album_peak = max([t.gain.peak for t in self.tracks])
+
         for track in self.tracks:
             track.gain.album_loudness = self.gain.album_loudness
             track.gain.album_peak = self.gain.album_peak
@@ -745,30 +750,35 @@ class Album:
         track_tasks = [track.write_tags() for track in self.tracks]
         await asyncio.gather(*track_tasks)
 
-    async def scan(self, force=False, skip_save=False):
+    async def scan(self, force=False, skip_save=False, preserve_album_gain=False):
         await self.read_tags()
 
         need_scan = False
+        skip_album_scan = False
         for track in self.tracks:
             if track.gain.loudness is None or track.gain.peak is None:
                 need_scan = True
             if self.gain.album_loudness is None:
                 self.gain.album_loudness = track.gain.album_loudness
             if self.gain.album_loudness != track.gain.album_loudness:
-                need_scan = True
+                need_scan = need_scan or not preserve_album_gain
+                skip_album_scan = preserve_album_gain
             if self.gain.album_peak is None:
                 self.gain.album_peak = track.gain.album_peak
             if self.gain.album_peak != track.gain.album_peak:
-                need_scan = True
+                need_scan = need_scan or not preserve_album_gain
+                skip_album_scan = preserve_album_gain
         if self.gain.album_loudness is None or self.gain.album_peak is None:
             need_scan = True
+            skip_album_scan = False
         if force:
             need_scan = True
+            skip_album_scan = False
 
         need_save = any([track.tagger.need_album_update for track in self.tracks])
 
         if need_scan:
-            await self.scan_gain()
+            await self.scan_gain(skip_album_scan)
             need_save = True
 
         if need_save:
@@ -781,6 +791,8 @@ class Album:
             print(track.gain)
         if need_scan:
             print("Rescanned loudness")
+        if skip_album_scan:
+            print("Preserving missmatching album gains")
         if need_save:
             if not skip_save:
                 print("Updated tags")
@@ -807,6 +819,12 @@ def main(argv=None):
             help='''
             Recalculate the ReplayGain values even if valid tags are already
             present in the files.
+            ''')
+    parser.add_argument('-p', '--preserve-album-gain', default=False, action='store_true',
+            help='''
+            Preserve existing album ReplayGain values even if they missmatch within files.
+            Using this option will preserve different album gain values for given files.
+            Using -f/--force overrides this arguments.
             ''')
     parser.add_argument('-j', '--jobs', type=int,
             default=multiprocessing.cpu_count(),
@@ -855,7 +873,7 @@ def main(argv=None):
 
     tasks = []
     albums = [Album(album, job_sem) for album in args.album]
-    tasks += [album.scan(force=args.force, skip_save=args.dry_run)
+    tasks += [album.scan(force=args.force, skip_save=args.dry_run, preserve_album_gain=args.preserve_album_gain)
                     for album in albums]
     tracks = [Track(track, job_sem) for track in args.track]
     tasks += [track.scan(force=args.force, skip_save=args.dry_run)
