@@ -622,6 +622,9 @@ class GainScanner:
                 stderr=subprocess.PIPE)
         (_, stderr_data) = await ffmpeg.communicate()
 
+        if ffmpeg.returncode != 0:
+            raise RuntimeError(stderr_data.decode())
+
         result = GainInfo()
         for line_bytes in stderr_data.splitlines():
             line_str = line_bytes.decode()
