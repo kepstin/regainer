@@ -40,26 +40,30 @@ import decimal
 
 logger = logging.getLogger(__name__)
 
+
 class AlbumAction(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
         super(AlbumAction, self).__init__(option_strings, dest, **kwargs)
+
     def __call__(self, parser, namespace, values, option_string=None):
         if namespace.album is None:
             namespace.album = deque()
-        if option_string == '-a' or option_string == '--album':
-            namespace.album.append({'track': deque(values), 'exclude': deque()})
-        if option_string == '-e' or option_string == '--exclude':
+        if option_string == "-a" or option_string == "--album":
+            namespace.album.append({"track": deque(values), "exclude": deque()})
+        if option_string == "-e" or option_string == "--exclude":
             if len(namespace.album) == 0:
                 if namespace.exclude is None:
                     namespace.exclude = values
                 else:
                     namespace.exclude.extend(values)
             else:
-                namespace.album[-1]['exclude'].extend(values)
+                namespace.album[-1]["exclude"].extend(values)
+
 
 class TrackAction(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
         super(TrackAction, self).__init__(option_strings, dest, **kwargs)
+
     def __call__(self, parser, namespace, values, option_string=None):
         if namespace.track is None:
             namespace.track = deque(values)
@@ -68,44 +72,44 @@ class TrackAction(argparse.Action):
 
 
 class GainInfo:
-    def __init__(self, loudness=None, album_loudness=None,
-            peak=None, album_peak=None):
+    def __init__(self, loudness=None, album_loudness=None, peak=None, album_peak=None):
         self.loudness = loudness
         self.album_loudness = album_loudness
         self.peak = peak
         self.album_peak = album_peak
 
     def __repr__(self):
-        return 'GainInfo(loudness={}, peak={}, album_loudness={}, album_peak={})'.format(
-                repr(self.loudness),
-                repr(self.peak),
-                repr(self.album_loudness),
-                repr(self.album_peak)
+        return "GainInfo(loudness={}, peak={}, album_loudness={}, album_peak={})".format(
+            repr(self.loudness),
+            repr(self.peak),
+            repr(self.album_loudness),
+            repr(self.album_peak),
         )
 
     def __str__(self):
-        str = ''
-        str += 'Track: '
+        str = ""
+        str += "Track: "
         if self.loudness is None:
-            str += 'I: None'
+            str += "I: None"
         else:
-            str += 'I: {:.2f} LUFS'.format(self.loudness)
-        str += ', '
+            str += "I: {:.2f} LUFS".format(self.loudness)
+        str += ", "
         if self.peak is None:
-            str += 'Peak: None'
+            str += "Peak: None"
         else:
-            str += 'Peak: {:.2f} dBFS'.format(self.peak)
-        str += '; Album: '
+            str += "Peak: {:.2f} dBFS".format(self.peak)
+        str += "; Album: "
         if self.album_loudness is None:
-            str += 'I: None'
+            str += "I: None"
         else:
-            str += 'I: {:.2f} LUFS'.format(self.album_loudness)
-        str += ', '
+            str += "I: {:.2f} LUFS".format(self.album_loudness)
+        str += ", "
         if self.album_peak is None:
-            str += 'Peak: None'
+            str += "Peak: None"
         else:
-            str += 'Peak: {:.2f} dBFS'.format(self.album_peak)
+            str += "Peak: {:.2f} dBFS".format(self.album_peak)
         return str
+
 
 class OggOpusMode(Enum):
     R128 = 1
@@ -148,6 +152,8 @@ class OggOpusMode(Enum):
 
     This is the default tagging method.
     """
+
+
 class ID3Mode(Enum):
     REPLAYGAIN = 1
     """Write REPLAYGAIN tags according to the ReplayGain 2.0 spec."""
@@ -162,9 +168,10 @@ class ID3Mode(Enum):
     This is the default tagging method.
     """
 
+
 class Tagger:
-    REPLAYGAIN_REF = -18.0 # LUFS
-    R128_REF = -23.0 # LUFS
+    REPLAYGAIN_REF = -18.0  # LUFS
+    R128_REF = -23.0  # LUFS
 
     ogg_opus_mode = OggOpusMode.COMPATIBLE
     id3_mode = ID3Mode.COMPATIBLE
@@ -176,6 +183,7 @@ class Tagger:
         self.need_track_update = False
 
     rg_gain_re = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)")
+
     def parse_rg_gain(self, value):
         m = self.rg_gain_re.match(value)
         if m:
@@ -185,8 +193,8 @@ class Tagger:
     def format_rg_gain(self, loudness):
         return "{:.2f} dB".format(self.REPLAYGAIN_REF - loudness)
 
-
     rg_peak_re = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)")
+
     def parse_rg_peak(self, value):
         m = self.rg_peak_re.match(value)
         if m:
@@ -197,6 +205,7 @@ class Tagger:
         return "{:.6f}".format(10.0 ** (peak / 20.0))
 
     opus_gain_re = re.compile(r"^\s*([+-]?\d{1,5})")
+
     def parse_opus_gain(self, value):
         m = self.opus_gain_re.match(value)
         if m:
@@ -205,14 +214,16 @@ class Tagger:
     def format_opus_gain(self, value):
         value = int((self.R128_REF - value) * 256.0)
         if value < -32768 or value > 32767:
-            raise ValueError('Opus gain value out of range')
+            raise ValueError("Opus gain value out of range")
         return "{:d}".format(value)
 
     def format_rva2_peak(self, peak):
         # mutagen expects a floating point value on linear PCM scale
         # with a maximum of 65535/32768
         linear_peak = 10.0 ** (peak / 20.0)
-        int_peak = decimal.Decimal.from_float(peak * 32768).to_integral_value(decimal.ROUND_HALF_EVEN)
+        int_peak = decimal.Decimal.from_float(peak * 32768).to_integral_value(
+            decimal.ROUND_HALF_EVEN
+        )
         int_peak = min(int_peak, 65535)
         linear_peak = float(int_peak) / 32768
         return linear_peak
@@ -224,57 +235,61 @@ class Tagger:
 
         # Load the standard REPLAYGAIN tags first
         # Case-insensitive matching...
-        for tag in self.audio.tags.getall('TXXX'):
-            if tag.desc.lower() == 'replaygain_track_gain':
+        for tag in self.audio.tags.getall("TXXX"):
+            if tag.desc.lower() == "replaygain_track_gain":
                 if self.tags.loudness is None:
                     self.tags.loudness = self.parse_rg_gain(tag.text[0])
                 have_replaygain = True
-                if tag.desc != 'REPLAYGAIN_TRACK_GAIN':
+                if tag.desc != "REPLAYGAIN_TRACK_GAIN":
                     need_update = True
-            elif tag.desc.lower() == 'replaygain_track_peak':
+            elif tag.desc.lower() == "replaygain_track_peak":
                 if self.tags.peak is None:
                     self.tags.peak = self.parse_rg_peak(tag.text[0])
                 have_replaygain = True
-                if tag.desc != 'REPLAYGAIN_TRACK_PEAK':
+                if tag.desc != "REPLAYGAIN_TRACK_PEAK":
                     need_update = True
-            elif tag.desc.lower() == 'replaygain_album_gain':
+            elif tag.desc.lower() == "replaygain_album_gain":
                 if self.tags.album_loudness is None:
                     self.tags.album_loudness = self.parse_rg_gain(tag.text[0])
                 have_replaygain = True
-                if tag.desc != 'REPLAYGAIN_ALBUM_GAIN':
+                if tag.desc != "REPLAYGAIN_ALBUM_GAIN":
                     need_update = True
-            elif tag.desc.lower() == 'replaygain_album_peak':
+            elif tag.desc.lower() == "replaygain_album_peak":
                 if self.tags.album_peak is None:
                     self.tags.album_peak = self.parse_rg_peak(tag.text[0])
                 have_replaygain = True
-                if tag.desc != 'REPLAYGAIN_ALBUM_GAIN':
+                if tag.desc != "REPLAYGAIN_ALBUM_GAIN":
                     need_update = True
 
         # Try loading the legacy RVA2 tags if information is missing
-        rva2_t = self.audio.tags.get('RVA2:track')
+        rva2_t = self.audio.tags.get("RVA2:track")
         if rva2_t is not None and rva2_t.channel == 1:
             if self.tags.loudness is None or self.tags.peak is None:
                 self.tags.loudness = self.REPLAYGAIN_REF - rva2_t.gain
                 self.tags.peak = 20.0 * log10(rva2_t.peak)
             have_rva2 = True
-        rva2_a = self.audio.tags.get('RVA2:album')
+        rva2_a = self.audio.tags.get("RVA2:album")
         if rva2_a is not None and rva2_a.channel == 1:
             if self.tags.album_loudness is None or self.tags.album_peak is None:
                 self.tags.album_loudness = self.REPLAYGAIN_REF - rva2_a.gain
                 self.tags.album_peak = 20.0 * log10(rva2_a.peak)
             have_rva2 = True
 
-        if have_rva2 and not (self.id3_mode is ID3Mode.RVA2 or \
-                self.id3_mode is ID3Mode.COMPATIBLE):
+        if have_rva2 and not (
+            self.id3_mode is ID3Mode.RVA2 or self.id3_mode is ID3Mode.COMPATIBLE
+        ):
             need_update = True
-        if have_replaygain and not (self.id3_mode is ID3Mode.REPLAYGAIN or \
-                self.id3_mode is ID3Mode.COMPATIBLE):
+        if have_replaygain and not (
+            self.id3_mode is ID3Mode.REPLAYGAIN or self.id3_mode is ID3Mode.COMPATIBLE
+        ):
             need_update = True
-        if not have_rva2 and (self.id3_mode is ID3Mode.RVA2 or \
-                self.id3_mode is ID3Mode.COMPATIBLE):
+        if not have_rva2 and (
+            self.id3_mode is ID3Mode.RVA2 or self.id3_mode is ID3Mode.COMPATIBLE
+        ):
             need_update = True
-        if not have_replaygain and (self.id3_mode is ID3Mode.REPLAYGAIN or \
-                self.id3_mode is ID3Mode.COMPATIBLE):
+        if not have_replaygain and (
+            self.id3_mode is ID3Mode.REPLAYGAIN or self.id3_mode is ID3Mode.COMPATIBLE
+        ):
             need_update = True
 
         self.need_track_update = need_update
@@ -288,34 +303,34 @@ class Tagger:
         have_replaygain = False
 
         # Read the opus-specific 'R128' tags
-        r128_tg = self.audio.get('R128_TRACK_GAIN')
+        r128_tg = self.audio.get("R128_TRACK_GAIN")
         if r128_tg is not None:
             if self.tags.loudness is None:
                 self.tags.loudness = self.parse_opus_gain(r128_tg[0])
             have_r128 = True
-        r128_ag = self.audio.get('R128_ALBUM_GAIN')
+        r128_ag = self.audio.get("R128_ALBUM_GAIN")
         if r128_ag is not None:
             if self.tags.album_loudness is None:
                 self.tags.album_loudness = self.parse_opus_gain(r128_ag[0])
             have_r128 = True
 
         # For compatibility, also read the generic replaygain tags
-        rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
+        rg_tg = self.audio.get("REPLAYGAIN_TRACK_GAIN")
         if rg_tg is not None:
             if self.tags.loudness is None:
                 self.tags.loudness = self.parse_rg_gain(rg_tg[0])
             have_replaygain = True
-        rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
+        rg_tp = self.audio.get("REPLAYGAIN_TRACK_PEAK")
         if rg_tp is not None:
             if self.tags.peak is None:
                 self.tags.peak = self.parse_rg_peak(rg_tp[0])
             have_replaygain = True
-        rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
+        rg_ag = self.audio.get("REPLAYGAIN_ALBUM_GAIN")
         if rg_ag is not None:
             if self.tags.album_loudness is None:
                 self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
             have_replaygain = True
-        rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
+        rg_ap = self.audio.get("REPLAYGAIN_ALBUM_PEAK")
         if rg_ap is not None:
             if self.tags.album_peak is None:
                 self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
@@ -324,67 +339,69 @@ class Tagger:
         # This is a hack, R128 gain tags don't store peak, but
         # we want to mark it as valid tag even without the peak
         if have_r128 and self.ogg_opus_mode is OggOpusMode.R128:
-            if self.tags.loudness is not None and \
-                    self.tags.peak is None:
-                self.tags.peak = float('nan')
-            if self.tags.album_loudness is not None and \
-                    self.tags.album_peak is None:
-                self.tags.album_peak = float('nan')
+            if self.tags.loudness is not None and self.tags.peak is None:
+                self.tags.peak = float("nan")
+            if self.tags.album_loudness is not None and self.tags.album_peak is None:
+                self.tags.album_peak = float("nan")
 
-        if have_r128 and not ( \
-                self.ogg_opus_mode is OggOpusMode.R128 or \
-                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+        if have_r128 and not (
+            self.ogg_opus_mode is OggOpusMode.R128
+            or self.ogg_opus_mode is OggOpusMode.COMPATIBLE
+        ):
             need_update = True
-        if have_replaygain and not ( \
-                self.ogg_opus_mode is OggOpusMode.REPLAYGAIN or \
-                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+        if have_replaygain and not (
+            self.ogg_opus_mode is OggOpusMode.REPLAYGAIN
+            or self.ogg_opus_mode is OggOpusMode.COMPATIBLE
+        ):
             need_update = True
-        if not have_r128 and ( \
-                self.ogg_opus_mode is OggOpusMode.R128 or \
-                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+        if not have_r128 and (
+            self.ogg_opus_mode is OggOpusMode.R128
+            or self.ogg_opus_mode is OggOpusMode.COMPATIBLE
+        ):
             need_update = True
-        if not have_replaygain and ( \
-                self.ogg_opus_mode is OggOpusMode.REPLAYGAIN or \
-                self.ogg_opus_mode is OggOpusMode.COMPATIBLE):
+        if not have_replaygain and (
+            self.ogg_opus_mode is OggOpusMode.REPLAYGAIN
+            or self.ogg_opus_mode is OggOpusMode.COMPATIBLE
+        ):
             need_update = True
 
         self.need_track_update = need_update
         self.need_album_update = need_update
-
 
     def read_gain_mp4(self):
         # These are the tags used by foobar2000, and are compatible with
         # rockbox.
         for key, value in self.audio.tags.items():
             atom_name = key[:4]
-            if atom_name != '----':
+            if atom_name != "----":
                 continue
 
-            _, mean, name = key.split(':', 2)
+            _, mean, name = key.split(":", 2)
 
-            if not (mean == 'com.apple.iTunes' or \
-                    mean == 'org.hydrogenaudio.replaygain'):
+            if not (
+                mean == "com.apple.iTunes" or mean == "org.hydrogenaudio.replaygain"
+            ):
                 continue
 
             if value[0].dataformat == mutagen.mp4.AtomDataType.UTF8:
-                value = value[0].decode(encoding='UTF-8')
+                value = value[0].decode(encoding="UTF-8")
             else:
                 continue
 
             name = name.lower()
-            if name == 'replaygain_track_gain':
+            if name == "replaygain_track_gain":
                 if self.tags.loudness is None:
                     self.tags.loudness = self.parse_rg_gain(value)
                 continue
-            if name == 'replaygain_track_peak':
+            if name == "replaygain_track_peak":
                 if self.tags.peak is None:
                     self.tags.peak = self.parse_rg_peak(value)
                 continue
-            if name == 'replaygain_album_gain':
+            if name == "replaygain_album_gain":
                 if self.tags.album_loudness is None:
                     self.tags.album_loudness = self.parse_rg_gain(value)
                 continue
-            if name == 'replaygain_album_peak':
+            if name == "replaygain_album_peak":
                 if self.tags.album_peak is None:
                     self.tags.album_peak = self.parse_rg_peak(value)
                 continue
@@ -392,19 +409,19 @@ class Tagger:
         return self.tags
 
     def read_gain_generic(self):
-        rg_tg = self.audio.get('REPLAYGAIN_TRACK_GAIN')
+        rg_tg = self.audio.get("REPLAYGAIN_TRACK_GAIN")
         if rg_tg is not None:
             if self.tags.loudness is None:
                 self.tags.loudness = self.parse_rg_gain(rg_tg[0])
-        rg_tp = self.audio.get('REPLAYGAIN_TRACK_PEAK')
+        rg_tp = self.audio.get("REPLAYGAIN_TRACK_PEAK")
         if rg_tp is not None:
             if self.tags.peak is None:
                 self.tags.peak = self.parse_rg_peak(rg_tp[0])
-        rg_ag = self.audio.get('REPLAYGAIN_ALBUM_GAIN')
+        rg_ag = self.audio.get("REPLAYGAIN_ALBUM_GAIN")
         if rg_ag is not None:
             if self.tags.album_loudness is None:
                 self.tags.album_loudness = self.parse_rg_gain(rg_ag[0])
-        rg_ap = self.audio.get('REPLAYGAIN_ALBUM_PEAK')
+        rg_ap = self.audio.get("REPLAYGAIN_ALBUM_PEAK")
         if rg_ap is not None:
             if self.tags.album_peak is None:
                 self.tags.album_peak = self.parse_rg_peak(rg_ap[0])
@@ -414,12 +431,13 @@ class Tagger:
         self.need_album_update = False
         self.audio = mutagen.File(self.filename)
 
-        if isinstance(self.audio, mutagen.id3.ID3FileType) and \
-                self.audio.tags is None:
+        if isinstance(self.audio, mutagen.id3.ID3FileType) and self.audio.tags is None:
             self.audio.add_tags()
 
         if self.audio is None or self.audio.tags is None:
-            raise Exception("Unable to determine tag format for file: {}".format(self.filename))
+            raise Exception(
+                "Unable to determine tag format for file: {}".format(self.filename)
+            )
 
         if isinstance(self.audio.tags, mutagen.id3.ID3):
             self.read_gain_id3()
@@ -430,68 +448,92 @@ class Tagger:
         else:
             self.read_gain_generic()
 
-        if self.tags.album_loudness is not None or \
-                self.tags.album_peak is not None:
+        if self.tags.album_loudness is not None or self.tags.album_peak is not None:
             self.need_track_update = True
 
         return self.tags
 
     def write_gain_id3(self):
-        logger.debug('Writing ID3 tags using mode %s', self.id3_mode.name)
+        logger.debug("Writing ID3 tags using mode %s", self.id3_mode.name)
         # Delete standard ReplayGain tags
         to_delete = []
-        for tag in self.audio.tags.getall('TXXX'):
+        for tag in self.audio.tags.getall("TXXX"):
             name = tag.desc.lower()
-            if name == 'replaygain_track_gain' or \
-                    name == 'replaygain_track_peak' or \
-                    name == 'replaygain_album_gain' or \
-                    name == 'replaygain_album_peak' or \
-                    name == 'replaygain_reference_loudness':
+            if (
+                name == "replaygain_track_gain"
+                or name == "replaygain_track_peak"
+                or name == "replaygain_album_gain"
+                or name == "replaygain_album_peak"
+                or name == "replaygain_reference_loudness"
+            ):
                 to_delete.append(tag.HashKey)
         for key in to_delete:
-            logger.debug('Removing %s', key)
+            logger.debug("Removing %s", key)
             del self.audio.tags[key]
         # Delete RVA2 frames
-        if 'RVA2:track' in self.audio:
-            logger.debug('Removing RVA2:track')
-            del self.audio['RVA2:track']
-        if 'RVA2:album' in self.audio:
-            logger.debug('Removing RVA2:album')
-            del self.audio['RVA2:album']
+        if "RVA2:track" in self.audio:
+            logger.debug("Removing RVA2:track")
+            del self.audio["RVA2:track"]
+        if "RVA2:album" in self.audio:
+            logger.debug("Removing RVA2:album")
+            del self.audio["RVA2:album"]
 
-        if self.id3_mode is ID3Mode.REPLAYGAIN or \
-                self.id3_mode is ID3Mode.COMPATIBLE:
+        if self.id3_mode is ID3Mode.REPLAYGAIN or self.id3_mode is ID3Mode.COMPATIBLE:
             if self.tags.loudness is not None:
                 gain = self.format_rg_gain(self.tags.loudness)
-                logger.debug('Adding TXXX:REPLAYGAIN_TRACK_GAIN=%s', gain)
-                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_TRACK_GAIN', text=[gain]))
+                logger.debug("Adding TXXX:REPLAYGAIN_TRACK_GAIN=%s", gain)
+                self.audio.tags.add(
+                    mutagen.id3.TXXX(
+                        encoding=0, desc="REPLAYGAIN_TRACK_GAIN", text=[gain]
+                    )
+                )
             if self.tags.peak is not None:
                 peak = self.format_rg_peak(self.tags.peak)
-                logger.debug('Adding TXXX:REPLAYGAIN_TRACK_PEAK=%s', peak)
-                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_TRACK_PEAK', text=[peak]))
+                logger.debug("Adding TXXX:REPLAYGAIN_TRACK_PEAK=%s", peak)
+                self.audio.tags.add(
+                    mutagen.id3.TXXX(
+                        encoding=0, desc="REPLAYGAIN_TRACK_PEAK", text=[peak]
+                    )
+                )
             if self.tags.album_loudness is not None:
                 gain = self.format_rg_gain(self.tags.album_loudness)
-                logger.debug('Adding TXXX:REPLAYGAIN_ALBUM_GAIN=%s', gain)
-                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_ALBUM_GAIN', text=[gain]))
+                logger.debug("Adding TXXX:REPLAYGAIN_ALBUM_GAIN=%s", gain)
+                self.audio.tags.add(
+                    mutagen.id3.TXXX(
+                        encoding=0, desc="REPLAYGAIN_ALBUM_GAIN", text=[gain]
+                    )
+                )
             if self.tags.album_peak is not None:
                 peak = self.format_rg_peak(self.tags.album_peak)
-                logger.debug('Adding TXXX:REPLAYGAIN_ALBUM_PEAK=%s', peak)
-                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_ALBUM_PEAK', text=[peak]))
+                logger.debug("Adding TXXX:REPLAYGAIN_ALBUM_PEAK=%s", peak)
+                self.audio.tags.add(
+                    mutagen.id3.TXXX(
+                        encoding=0, desc="REPLAYGAIN_ALBUM_PEAK", text=[peak]
+                    )
+                )
 
-        if self.id3_mode is ID3Mode.RVA2 or \
-                self.id3_mode is ID3Mode.COMPATIBLE:
-            if self.tags.loudness is not None and \
-                    self.tags.peak is not None:
+        if self.id3_mode is ID3Mode.RVA2 or self.id3_mode is ID3Mode.COMPATIBLE:
+            if self.tags.loudness is not None and self.tags.peak is not None:
                 gain = self.REPLAYGAIN_REF - self.tags.loudness
                 peak = self.format_rva2_peak(self.tags.peak)
-                logger.debug('Adding RVA2:track={channel=1, gain=%f, peak=%f}', gain, peak)
-                self.audio.tags.add(mutagen.id3.RVA2(desc='track', channel=1, gain=gain, peak=peak))
-            if self.tags.album_loudness is not None and \
-                    self.tags.album_peak is not None:
+                logger.debug(
+                    "Adding RVA2:track={channel=1, gain=%f, peak=%f}", gain, peak
+                )
+                self.audio.tags.add(
+                    mutagen.id3.RVA2(desc="track", channel=1, gain=gain, peak=peak)
+                )
+            if (
+                self.tags.album_loudness is not None
+                and self.tags.album_peak is not None
+            ):
                 gain = self.REPLAYGAIN_REF - self.tags.album_loudness
                 peak = self.format_rva2_peak(self.tags.album_peak)
-                logger.debug('Adding RVA2:album={channel=1, gain=%f, peak=%f}', gain, peak)
-                self.audio.tags.add(mutagen.id3.RVA2(desc='album', channel=1, gain=gain, peak=peak))
+                logger.debug(
+                    "Adding RVA2:album={channel=1, gain=%f, peak=%f}", gain, peak
+                )
+                self.audio.tags.add(
+                    mutagen.id3.RVA2(desc="album", channel=1, gain=gain, peak=peak)
+                )
 
         self.audio.tags.update_to_v24()
         self.audio.save()
@@ -500,29 +542,39 @@ class Tagger:
         # Delete all tags, particularly needed if switching modes
         self.write_gain_generic_cleanup()
 
-        if self.ogg_opus_mode is OggOpusMode.R128 or \
-                self.ogg_opus_mode is OggOpusMode.COMPATIBLE:
+        if (
+            self.ogg_opus_mode is OggOpusMode.R128
+            or self.ogg_opus_mode is OggOpusMode.COMPATIBLE
+        ):
             if self.tags.loudness is not None:
-                self.audio['R128_TRACK_GAIN'] = \
-                        [self.format_opus_gain(self.tags.loudness)]
+                self.audio["R128_TRACK_GAIN"] = [
+                    self.format_opus_gain(self.tags.loudness)
+                ]
             if self.tags.album_loudness is not None:
-                self.audio['R128_ALBUM_GAIN'] = \
-                        [self.format_opus_gain(self.tags.album_loudness)]
+                self.audio["R128_ALBUM_GAIN"] = [
+                    self.format_opus_gain(self.tags.album_loudness)
+                ]
 
-        if self.ogg_opus_mode is OggOpusMode.REPLAYGAIN or \
-                self.ogg_opus_mode is OggOpusMode.COMPATIBLE:
+        if (
+            self.ogg_opus_mode is OggOpusMode.REPLAYGAIN
+            or self.ogg_opus_mode is OggOpusMode.COMPATIBLE
+        ):
             if self.tags.loudness is not None:
-                self.audio['REPLAYGAIN_TRACK_GAIN'] = \
-                        [self.format_rg_gain(self.tags.loudness)]
+                self.audio["REPLAYGAIN_TRACK_GAIN"] = [
+                    self.format_rg_gain(self.tags.loudness)
+                ]
             if self.tags.peak is not None:
-                self.audio['REPLAYGAIN_TRACK_PEAK'] = \
-                        [self.format_rg_peak(self.tags.peak)]
+                self.audio["REPLAYGAIN_TRACK_PEAK"] = [
+                    self.format_rg_peak(self.tags.peak)
+                ]
             if self.tags.album_loudness is not None:
-                self.audio['REPLAYGAIN_ALBUM_GAIN'] = \
-                        [self.format_rg_gain(self.tags.album_loudness)]
+                self.audio["REPLAYGAIN_ALBUM_GAIN"] = [
+                    self.format_rg_gain(self.tags.album_loudness)
+                ]
             if self.tags.album_peak is not None:
-                self.audio['REPLAYGAIN_ALBUM_PEAK'] = \
-                        [self.format_rg_peak(self.tags.album_peak)]
+                self.audio["REPLAYGAIN_ALBUM_PEAK"] = [
+                    self.format_rg_peak(self.tags.album_peak)
+                ]
 
         self.audio.save()
 
@@ -530,25 +582,28 @@ class Tagger:
         to_delete = []
         for key, value in self.audio.tags.items():
             atom_name = key[:4]
-            if atom_name != '----':
+            if atom_name != "----":
                 continue
 
-            _, mean, name = key.split(':', 2)
+            _, mean, name = key.split(":", 2)
 
-            if not (mean == 'com.apple.iTunes' or \
-                    mean == 'org.hydrogenaudio.replaygain'):
+            if not (
+                mean == "com.apple.iTunes" or mean == "org.hydrogenaudio.replaygain"
+            ):
                 continue
 
             if value[0].dataformat == mutagen.mp4.AtomDataType.UTF8:
-                value = value[0].decode(encoding='UTF-8')
+                value = value[0].decode(encoding="UTF-8")
             else:
                 continue
 
             name = name.lower()
-            if name == 'replaygain_track_gain' or \
-                    name == 'replaygain_track_peak' or \
-                    name == 'replaygain_album_gain' or \
-                    name == 'replaygain_album_peak':
+            if (
+                name == "replaygain_track_gain"
+                or name == "replaygain_track_peak"
+                or name == "replaygain_album_gain"
+                or name == "replaygain_album_peak"
+            ):
                 to_delete.append(key)
         for key in to_delete:
             del self.audio.tags[key]
@@ -556,63 +611,70 @@ class Tagger:
         # These are the tags used by foobar2000, and are compatible with
         # rockbox.
         if self.tags.loudness is not None:
-            self.audio.tags['----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN'] = \
-                    [mutagen.mp4.MP4FreeForm(
-                        self.format_rg_gain(self.tags.loudness).encode(
-                            encoding='UTF-8'))]
+            self.audio.tags["----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN"] = [
+                mutagen.mp4.MP4FreeForm(
+                    self.format_rg_gain(self.tags.loudness).encode(encoding="UTF-8")
+                )
+            ]
         if self.tags.peak is not None:
-            self.audio.tags['----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK'] = \
-                    [mutagen.mp4.MP4FreeForm(
-                        self.format_rg_peak(self.tags.peak).encode(
-                            encoding='UTF-8'))]
+            self.audio.tags["----:com.apple.iTunes:REPLAYGAIN_TRACK_PEAK"] = [
+                mutagen.mp4.MP4FreeForm(
+                    self.format_rg_peak(self.tags.peak).encode(encoding="UTF-8")
+                )
+            ]
         if self.tags.album_loudness is not None:
-            self.audio.tags['----:com.apple.iTunes:REPLAYGAIN_ALBUM_GAIN'] = \
-                    [mutagen.mp4.MP4FreeForm(
-                        self.format_rg_gain(self.tags.album_loudness).encode(
-                            encoding='UTF-8'))]
+            self.audio.tags["----:com.apple.iTunes:REPLAYGAIN_ALBUM_GAIN"] = [
+                mutagen.mp4.MP4FreeForm(
+                    self.format_rg_gain(self.tags.album_loudness).encode(
+                        encoding="UTF-8"
+                    )
+                )
+            ]
         if self.tags.album_peak is not None:
-            self.audio.tags['----:com.apple.iTunes:REPLAYGAIN_ALBUM_PEAK'] = \
-                    [mutagen.mp4.MP4FreeForm(
-                        self.format_rg_peak(self.tags.album_peak).encode(
-                            encoding='UTF-8'))]
+            self.audio.tags["----:com.apple.iTunes:REPLAYGAIN_ALBUM_PEAK"] = [
+                mutagen.mp4.MP4FreeForm(
+                    self.format_rg_peak(self.tags.album_peak).encode(encoding="UTF-8")
+                )
+            ]
 
         self.audio.save()
 
-
     def write_gain_generic_cleanup(self):
         # Delete the standard tags
-        if 'REPLAYGAIN_TRACK_GAIN' in self.audio:
-            del self.audio['REPLAYGAIN_TRACK_GAIN']
-        if 'REPLAYGAIN_TRACK_PEAK' in self.audio:
-            del self.audio['REPLAYGAIN_TRACK_PEAK']
-        if 'REPLAYGAIN_ALBUM_GAIN' in self.audio:
-            del self.audio['REPLAYGAIN_ALBUM_GAIN']
-        if 'REPLAYGAIN_ALBUM_PEAK' in self.audio:
-            del self.audio['REPLAYGAIN_ALBUM_PEAK']
+        if "REPLAYGAIN_TRACK_GAIN" in self.audio:
+            del self.audio["REPLAYGAIN_TRACK_GAIN"]
+        if "REPLAYGAIN_TRACK_PEAK" in self.audio:
+            del self.audio["REPLAYGAIN_TRACK_PEAK"]
+        if "REPLAYGAIN_ALBUM_GAIN" in self.audio:
+            del self.audio["REPLAYGAIN_ALBUM_GAIN"]
+        if "REPLAYGAIN_ALBUM_PEAK" in self.audio:
+            del self.audio["REPLAYGAIN_ALBUM_PEAK"]
         # Delete unusual/old tags
-        if 'REPLAYGAIN_REFERENCE_LOUDNESS' in self.audio:
-            del self.audio['REPLAYGAIN_REFERENCE_LOUDNESS']
+        if "REPLAYGAIN_REFERENCE_LOUDNESS" in self.audio:
+            del self.audio["REPLAYGAIN_REFERENCE_LOUDNESS"]
         # Ogg Opus R128 gain tags (shouldn't ever be in other formats...)
-        if 'R128_TRACK_GAIN' in self.audio:
-            del self.audio['R128_TRACK_GAIN']
-        if 'R128_ALBUM_GAIN' in self.audio:
-            del self.audio['R128_ALBUM_GAIN']
+        if "R128_TRACK_GAIN" in self.audio:
+            del self.audio["R128_TRACK_GAIN"]
+        if "R128_ALBUM_GAIN" in self.audio:
+            del self.audio["R128_ALBUM_GAIN"]
 
     def write_gain_generic(self):
         self.write_gain_generic_cleanup()
 
         if self.tags.loudness is not None:
-            self.audio['REPLAYGAIN_TRACK_GAIN'] = \
-                    [self.format_rg_gain(self.tags.loudness)]
+            self.audio["REPLAYGAIN_TRACK_GAIN"] = [
+                self.format_rg_gain(self.tags.loudness)
+            ]
         if self.tags.peak is not None:
-            self.audio['REPLAYGAIN_TRACK_PEAK'] = \
-                    [self.format_rg_peak(self.tags.peak)]
+            self.audio["REPLAYGAIN_TRACK_PEAK"] = [self.format_rg_peak(self.tags.peak)]
         if self.tags.album_loudness is not None:
-            self.audio['REPLAYGAIN_ALBUM_GAIN'] = \
-                    [self.format_rg_gain(self.tags.album_loudness)]
+            self.audio["REPLAYGAIN_ALBUM_GAIN"] = [
+                self.format_rg_gain(self.tags.album_loudness)
+            ]
         if self.tags.album_peak is not None:
-            self.audio['REPLAYGAIN_ALBUM_PEAK'] = \
-                    [self.format_rg_peak(self.tags.album_peak)]
+            self.audio["REPLAYGAIN_ALBUM_PEAK"] = [
+                self.format_rg_peak(self.tags.album_peak)
+            ]
 
         self.audio.save()
 
@@ -628,17 +690,32 @@ class Tagger:
             return self.write_gain_mp4()
         return self.write_gain_generic()
 
+
 class GainScanner:
     i_re = re.compile(r"^\s+I:\s+(-?\d+\.\d+) LUFS$", re.M)
     peak_re = re.compile(r"^\s+Peak:\s+(-?\d+\.\d+) dBFS$", re.M)
 
     async def ffmpeg_parse_ebur128(self, *ff_opts):
-        ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner', '-vn',
-                '-loglevel', 'info'] + list(ff_opts) + ['-f', 'null', '-']
-        logger.debug('ffmpeg command: %r', ff_args)
-        ffmpeg = await asyncio.create_subprocess_exec(*ff_args,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE)
+        ff_args = (
+            [
+                "ffmpeg",
+                "-nostats",
+                "-nostdin",
+                "-hide_banner",
+                "-vn",
+                "-loglevel",
+                "info",
+            ]
+            + list(ff_opts)
+            + ["-f", "null", "-"]
+        )
+        logger.debug("ffmpeg command: %r", ff_args)
+        ffmpeg = await asyncio.create_subprocess_exec(
+            *ff_args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE
+        )
         (_, stderr_data) = await ffmpeg.communicate()
 
         if ffmpeg.returncode != 0:
@@ -658,8 +735,14 @@ class GainScanner:
         return result
 
     async def scan_track(self, filename):
-        result = await self.ffmpeg_parse_ebur128('-i', 'file:' + filename,
-                '-filter_complex', 'ebur128=framelog=verbose:peak=true[out]', '-map', '[out]')
+        result = await self.ffmpeg_parse_ebur128(
+            "-i",
+            "file:" + filename,
+            "-filter_complex",
+            "ebur128=framelog=verbose:peak=true[out]",
+            "-map",
+            "[out]",
+        )
         return result
 
     async def scan_album(self, filenames):
@@ -667,12 +750,16 @@ class GainScanner:
             raise ValueError("filenames is empty")
         ff_args = []
         for filename in filenames:
-            ff_args += ['-i', 'file:' + filename]
-        ff_args += ['-filter_complex',
-                'concat=n={}:v=0:a=1,ebur128=framelog=verbose[out]'.format(len(filenames)),
-                '-map', '[out]']
+            ff_args += ["-i", "file:" + filename]
+        ff_args += [
+            "-filter_complex",
+            "concat=n={}:v=0:a=1,ebur128=framelog=verbose[out]".format(len(filenames)),
+            "-map",
+            "[out]",
+        ]
         result = await self.ffmpeg_parse_ebur128(*ff_args)
         return GainInfo(album_loudness=result.loudness, album_peak=result.peak)
+
 
 class Track:
     def __init__(self, filename, job_sem):
@@ -690,7 +777,7 @@ class Track:
         async with self.job_sem:
             gain_scanner = GainScanner()
             self.gain = await gain_scanner.scan_track(self.filename)
-            logger.debug('Track%d:Calculated gain: %r', id(self), self.gain)
+            logger.debug("Track%d:Calculated gain: %r", id(self), self.gain)
 
     async def write_tags(self):
         async with self.job_sem:
@@ -727,10 +814,12 @@ class Track:
             else:
                 print("Needs tag update")
 
+
 class AlbumTrack(Track):
     def __init__(self, filename, job_sem, exclude):
         super().__init__(filename, job_sem)
         self.exclude = exclude
+
 
 class Album:
     def __init__(self, album_param, job_sem):
@@ -738,9 +827,9 @@ class Album:
 
         self.gain = GainInfo()
         self.tracks = []
-        for filename in album_param['track']:
+        for filename in album_param["track"]:
             self.tracks.append(AlbumTrack(filename, job_sem, exclude=False))
-        for filename in album_param['exclude']:
+        for filename in album_param["exclude"]:
             self.tracks.append(AlbumTrack(filename, job_sem, exclude=True))
 
     async def read_tags(self):
@@ -760,7 +849,7 @@ class Album:
         await asyncio.gather(album_task, *track_tasks)
 
         self.gain.album_peak = max([t.gain.peak for t in self.tracks])
-        logger.debug('Album%d:Calculated album gain: %r', id(self), self.gain)
+        logger.debug("Album%d:Calculated album gain: %r", id(self), self.gain)
         for track in self.tracks:
             track.gain.album_loudness = self.gain.album_loudness
             track.gain.album_peak = self.gain.album_peak
@@ -811,68 +900,109 @@ class Album:
             else:
                 print("Needs tag update")
 
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-            description='''
+        description="""
             Add ReplayGain tags to files using the EBU R128 algorithm.
-            ''',
-            epilog='''
+            """,
+        epilog="""
             If neither --track or --album are specified, the mode used depends on
             the number of files given as arguments. If a single file is given, it
             will be processed in track mode. If multiple files are given, they
             will be processed in album mode as a single album.
-            ''')
-    parser.add_argument('-n', '--dry-run', default=False, action='store_true',
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "-n",
+        "--dry-run",
+        default=False,
+        action="store_true",
+        help="""
             Only calculate and display the ReplayGain values; do not actually
             save the tags in the audio files.
-            ''')
-    parser.add_argument('-f', '--force', default=False, action='store_true',
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "-f",
+        "--force",
+        default=False,
+        action="store_true",
+        help="""
             Recalculate the ReplayGain values even if valid tags are already
             present in the files.
-            ''')
-    parser.add_argument('--debug', dest='log_level', default=logging.WARNING, action='store_const', const=logging.DEBUG,
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "--debug",
+        dest="log_level",
+        default=logging.WARNING,
+        action="store_const",
+        const=logging.DEBUG,
+        help="""
             Print a bunch of extra debugging output.
-            ''')
-    parser.add_argument('-j', '--jobs', type=int,
-            default=multiprocessing.cpu_count(),
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=multiprocessing.cpu_count(),
+        help="""
             The number of operations to run in parallel. The default is
             auto-detected, currently %(default)s.
-            ''')
-    parser.add_argument('-t', '--track', nargs='+', default=deque(),
-            metavar='FILE', action=TrackAction,
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "-t",
+        "--track",
+        nargs="+",
+        default=deque(),
+        metavar="FILE",
+        action=TrackAction,
+        help="""
             Treat the following audio files as individual tracks.
-            ''')
-    parser.add_argument('-a', '--album', nargs='+', default=deque(),
-            metavar='FILE', action=AlbumAction,
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "-a",
+        "--album",
+        nargs="+",
+        default=deque(),
+        metavar="FILE",
+        action=AlbumAction,
+        help="""
             Treat the following audio files as part of the same album.
             Each time the --album option is specified, it starts a new album.
-            ''')
-    parser.add_argument('-e', '--exclude', nargs='+', default=deque(),
-            metavar='FILE', action=AlbumAction,
-            help='''
+            """,
+    )
+    parser.add_argument(
+        "-e",
+        "--exclude",
+        nargs="+",
+        default=deque(),
+        metavar="FILE",
+        action=AlbumAction,
+        help="""
             Tag the following files as part of the current album, but do not
             use their audio when calculating the value for the album ReplayGain
             tag.
-            ''')
-    parser.add_argument('FILE', nargs='*', default=[], help=argparse.SUPPRESS)
+            """,
+    )
+    parser.add_argument("FILE", nargs="*", default=[], help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
-    logging.basicConfig(format='%(levelname)s:%(message)s', level=args.log_level)
+    logging.basicConfig(format="%(levelname)s:%(message)s", level=args.log_level)
 
-    logger.debug('Debug logging has been enabled')
-    logger.debug('Command line arguments: %r', args)
+    logger.debug("Debug logging has been enabled")
+    logger.debug("Command line arguments: %r", args)
 
     # Handle the "loose" arguments, by turning them into tracks or albums
     if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
         # Treat the initial arguments as an album
         args.album.appendleft(
-                {'track': deque(args.FILE), 'exclude': deque(args.exclude)})
+            {"track": deque(args.FILE), "exclude": deque(args.exclude)}
+        )
         args.FILE = None
         args.exclude = None
     elif len(args.FILE) > 0:
@@ -882,18 +1012,16 @@ def main(argv=None):
     if len(args.track) == 0 and len(args.album) == 0:
         parser.print_usage()
         sys.exit(2)
-    
+
     loop = asyncio.get_event_loop()
 
     job_sem = asyncio.BoundedSemaphore(args.jobs)
 
     tasks = []
     albums = [Album(album, job_sem) for album in args.album]
-    tasks += [album.scan(force=args.force, skip_save=args.dry_run)
-                    for album in albums]
+    tasks += [album.scan(force=args.force, skip_save=args.dry_run) for album in albums]
     tracks = [Track(track, job_sem) for track in args.track]
-    tasks += [track.scan(force=args.force, skip_save=args.dry_run)
-                    for track in tracks]
+    tasks += [track.scan(force=args.force, skip_save=args.dry_run) for track in tracks]
 
     future = asyncio.ensure_future(asyncio.gather(*tasks))
 
@@ -902,6 +1030,7 @@ def main(argv=None):
     future.result()
 
     loop.close()
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
