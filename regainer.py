@@ -35,6 +35,10 @@ import mutagen
 from math import log10
 from enum import Enum
 import sys
+import logging
+import decimal
+
+logger = logging.getLogger(__name__)
 
 class AlbumAction(argparse.Action):
     def __init__(self, option_strings, dest, **kwargs):
@@ -70,6 +74,14 @@ class GainInfo:
         self.album_loudness = album_loudness
         self.peak = peak
         self.album_peak = album_peak
+
+    def __repr__(self):
+        return 'GainInfo(loudness={}, peak={}, album_loudness={}, album_peak={})'.format(
+                repr(self.loudness),
+                repr(self.peak),
+                repr(self.album_loudness),
+                repr(self.album_peak)
+        )
 
     def __str__(self):
         str = ''
@@ -195,7 +207,15 @@ class Tagger:
         if value < -32768 or value > 32767:
             raise ValueError('Opus gain value out of range')
         return "{:d}".format(value)
-        
+
+    def format_rva2_peak(self, peak):
+        # mutagen expects a floating point value on linear PCM scale
+        # with a maximum of 65535/32768
+        linear_peak = 10.0 ** (peak / 20.0)
+        int_peak = decimal.Decimal.from_float(peak * 32768).to_integral_value(decimal.ROUND_HALF_EVEN)
+        int_peak = min(int_peak, 65535)
+        linear_peak = float(int_peak) / 32768
+        return linear_peak
 
     def read_gain_id3(self):
         need_update = False
@@ -417,6 +437,7 @@ class Tagger:
         return self.tags
 
     def write_gain_id3(self):
+        logger.debug('Writing ID3 tags using mode %s', self.id3_mode.name)
         # Delete standard ReplayGain tags
         to_delete = []
         for tag in self.audio.tags.getall('TXXX'):
@@ -428,52 +449,49 @@ class Tagger:
                     name == 'replaygain_reference_loudness':
                 to_delete.append(tag.HashKey)
         for key in to_delete:
+            logger.debug('Removing %s', key)
             del self.audio.tags[key]
         # Delete RVA2 frames
         if 'RVA2:track' in self.audio:
+            logger.debug('Removing RVA2:track')
             del self.audio['RVA2:track']
         if 'RVA2:album' in self.audio:
+            logger.debug('Removing RVA2:album')
             del self.audio['RVA2:album']
 
         if self.id3_mode is ID3Mode.REPLAYGAIN or \
                 self.id3_mode is ID3Mode.COMPATIBLE:
             if self.tags.loudness is not None:
-                self.audio.tags.add(mutagen.id3.TXXX(
-                    encoding=0,
-                    desc='REPLAYGAIN_TRACK_GAIN',
-                    text=[self.format_rg_gain(self.tags.loudness)]))
+                gain = self.format_rg_gain(self.tags.loudness)
+                logger.debug('Adding TXXX:REPLAYGAIN_TRACK_GAIN=%s', gain)
+                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_TRACK_GAIN', text=[gain]))
             if self.tags.peak is not None:
-                self.audio.tags.add(mutagen.id3.TXXX(
-                    encoding=0,
-                    desc='REPLAYGAIN_TRACK_PEAK',
-                    text=[self.format_rg_peak(self.tags.peak)]))
+                peak = self.format_rg_peak(self.tags.peak)
+                logger.debug('Adding TXXX:REPLAYGAIN_TRACK_PEAK=%s', peak)
+                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_TRACK_PEAK', text=[peak]))
             if self.tags.album_loudness is not None:
-                self.audio.tags.add(mutagen.id3.TXXX(
-                    encoding=0,
-                    desc='REPLAYGAIN_ALBUM_GAIN',
-                    text=[self.format_rg_gain(self.tags.album_loudness)]))
+                gain = self.format_rg_gain(self.tags.album_loudness)
+                logger.debug('Adding TXXX:REPLAYGAIN_ALBUM_GAIN=%s', gain)
+                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_ALBUM_GAIN', text=[gain]))
             if self.tags.album_peak is not None:
-                self.audio.tags.add(mutagen.id3.TXXX(
-                    encoding=0,
-                    desc='REPLAYGAIN_ALBUM_PEAK',
-                    text=[self.format_rg_peak(self.tags.album_peak)]))
+                peak = self.format_rg_peak(self.tags.album_peak)
+                logger.debug('Adding TXXX:REPLAYGAIN_ALBUM_PEAK=%s', peak)
+                self.audio.tags.add(mutagen.id3.TXXX(encoding=0, desc='REPLAYGAIN_ALBUM_PEAK', text=[peak]))
 
         if self.id3_mode is ID3Mode.RVA2 or \
                 self.id3_mode is ID3Mode.COMPATIBLE:
             if self.tags.loudness is not None and \
                     self.tags.peak is not None:
-                self.audio.tags.add(mutagen.id3.RVA2(
-                    desc='track',
-                    channel=1,
-                    gain=self.REPLAYGAIN_REF - self.tags.loudness,
-                    peak=10.0 ** (self.tags.peak / 20.0)))
+                gain = self.REPLAYGAIN_REF - self.tags.loudness
+                peak = self.format_rva2_peak(self.tags.peak)
+                logger.debug('Adding RVA2:track={channel=1, gain=%f, peak=%f}', gain, peak)
+                self.audio.tags.add(mutagen.id3.RVA2(desc='track', channel=1, gain=gain, peak=peak))
             if self.tags.album_loudness is not None and \
                     self.tags.album_peak is not None:
-                self.audio.tags.add(mutagen.id3.RVA2(
-                    desc='album',
-                    channel=1,
-                    gain=self.REPLAYGAIN_REF - self.tags.album_loudness,
-                    peak=10.00 ** (self.tags.album_peak / 20.0)))
+                gain = self.REPLAYGAIN_REF - self.tags.album_loudness
+                peak = self.format_rva2_peak(self.tags.album_peak)
+                logger.debug('Adding RVA2:album={channel=1, gain=%f, peak=%f}', gain, peak)
+                self.audio.tags.add(mutagen.id3.RVA2(desc='album', channel=1, gain=gain, peak=peak))
 
         self.audio.tags.update_to_v24()
         self.audio.save()
@@ -617,6 +635,7 @@ class GainScanner:
     async def ffmpeg_parse_ebur128(self, *ff_opts):
         ff_args = ['ffmpeg', '-nostats', '-nostdin', '-hide_banner', '-vn',
                 '-loglevel', 'info'] + list(ff_opts) + ['-f', 'null', '-']
+        logger.debug('ffmpeg command: %r', ff_args)
         ffmpeg = await asyncio.create_subprocess_exec(*ff_args,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE)
@@ -671,6 +690,7 @@ class Track:
         async with self.job_sem:
             gain_scanner = GainScanner()
             self.gain = await gain_scanner.scan_track(self.filename)
+            logger.debug('Track%d:Calculated gain: %r', id(self), self.gain)
 
     async def write_tags(self):
         async with self.job_sem:
@@ -740,6 +760,7 @@ class Album:
         await asyncio.gather(album_task, *track_tasks)
 
         self.gain.album_peak = max([t.gain.peak for t in self.tracks])
+        logger.debug('Album%d:Calculated album gain: %r', id(self), self.gain)
         for track in self.tracks:
             track.gain.album_loudness = self.gain.album_loudness
             track.gain.album_peak = self.gain.album_peak
@@ -811,6 +832,10 @@ def main(argv=None):
             Recalculate the ReplayGain values even if valid tags are already
             present in the files.
             ''')
+    parser.add_argument('--debug', dest='log_level', default=logging.WARNING, action='store_const', const=logging.DEBUG,
+            help='''
+            Print a bunch of extra debugging output.
+            ''')
     parser.add_argument('-j', '--jobs', type=int,
             default=multiprocessing.cpu_count(),
             help='''
@@ -838,6 +863,11 @@ def main(argv=None):
     parser.add_argument('FILE', nargs='*', default=[], help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
+    logging.basicConfig(format='%(levelname)s:%(message)s', level=args.log_level)
+
+    logger.debug('Debug logging has been enabled')
+    logger.debug('Command line arguments: %r', args)
+
     # Handle the "loose" arguments, by turning them into tracks or albums
     if len(args.FILE) + len(args.exclude) > 1 or len(args.exclude) > 0:
         # Treat the initial arguments as an album
@@ -852,6 +882,7 @@ def main(argv=None):
     if len(args.track) == 0 and len(args.album) == 0:
         parser.print_usage()
         sys.exit(2)
+    
     loop = asyncio.get_event_loop()
 
     job_sem = asyncio.BoundedSemaphore(args.jobs)
