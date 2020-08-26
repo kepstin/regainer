@@ -215,7 +215,7 @@ class Tagger:
         gain = int((self.R128_REF - loudness) * 256.0)
         clipped_gain = max(-32768, min(gain, 32767))
 
-        if gain != clipped_value:
+        if gain != clipped_gain:
             logger.warning(
                 "%s: Clipping OggOpus R128 %s gain adjustment %.2f dB to %.2f dB",
                 self.filename,
