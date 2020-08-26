@@ -217,13 +217,14 @@ class Tagger:
 
         if value != clipped_value:
             logger.warning(
-                "%s: Clipping Opus R128 %s gain %.2f dB to %.2f dB",
+                "%s: Clipping Opus R128 %s gain adjustment %.2f dB to %.2f dB",
                 self.filename,
                 context,
                 float(value) / 256,
                 float(clipped_value) / 256,
             )
             value = clipped_value
+
         return "{:d}".format(value)
 
     def format_rva2_peak(self, peak, context):
@@ -232,6 +233,7 @@ class Tagger:
         int_peak = decimal.Decimal.from_float(
             (10.0 ** (peak / 20.0)) * 32768
         ).to_integral_value(decimal.ROUND_HALF_EVEN)
+
         if int_peak > 65535:
             logger.warning(
                 "%s: Clipping RVA2 %s peak %.2f to %.2f",
