@@ -211,38 +211,55 @@ class Tagger:
         if m:
             return self.R128_REF - float(m.group(1)) / 256.0
 
-    def format_opus_gain(self, value, context):
-        value = int((self.R128_REF - value) * 256.0)
-        clipped_value = max(-32768, min(value, 32767))
+    def format_opus_gain(self, loudness, context):
+        gain = int((self.R128_REF - loudness) * 256.0)
+        clipped_gain = max(-32768, min(gain, 32767))
 
-        if value != clipped_value:
+        if gain != clipped_value:
             logger.warning(
-                "%s: Clipping Opus R128 %s gain adjustment %.2f dB to %.2f dB",
+                "%s: Clipping OggOpus R128 %s gain adjustment %.2f dB to %.2f dB",
                 self.filename,
                 context,
-                float(value) / 256,
-                float(clipped_value) / 256,
+                float(gain) / 256,
+                float(clipped_gain) / 256,
             )
-            value = clipped_value
+            gain = clipped_gain
 
-        return "{:d}".format(value)
+        return "{:d}".format(gain)
+
+    def format_rva2_gain(self, loudness, context):
+        int_gain = decimal.Decimal.from_float(
+            (self.REPLAYGAIN_REF - loudness) * 512
+        ).to_integral_value(decimal.ROUND_HALF_EVEN)
+        clipped_int_gain = max(-32768, min(int_gain, 32767))
+
+        if int_gain != clipped_int_gain:
+            logger.warning(
+                "%s: Clipping ID3 RVA2 %s gain adjustment %.2 dB to %.2f dB",
+                self.filename,
+                context,
+                float(int_gain) / 512,
+                float(clipped_int_gain) / 512,
+            )
+            int_gain = clipped_int_gain
+
+        return float(int_gain) / 512
 
     def format_rva2_peak(self, peak, context):
-        # mutagen expects a floating point value on linear PCM scale
-        # with a maximum of 65535/32768
         int_peak = decimal.Decimal.from_float(
             (10.0 ** (peak / 20.0)) * 32768
         ).to_integral_value(decimal.ROUND_HALF_EVEN)
+        clipped_int_peak = min(int_peak, 65535)
 
-        if int_peak > 65535:
+        if int_peak != clipped_int_peak:
             logger.warning(
-                "%s: Clipping RVA2 %s peak %.2f to %.2f",
+                "%s: Clipping ID3 RVA2 %s peak %.6f to %.6f",
                 self.filename,
                 context,
                 float(int_peak) / 32768,
-                65535.0 / 32768,
+                float(clipped_int_peak) / 32768,
             )
-            int_peak = 65535
+            int_peak = clipped_int_peak
 
         return float(int_peak) / 32768
 
@@ -1010,7 +1027,7 @@ def main(argv=None):
     parser.add_argument("FILE", nargs="*", default=[], help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
-    logging.basicConfig(format="%(levelname)s:%(message)s", level=args.log_level)
+    logging.basicConfig(format="%(levelname)s: %(message)s", level=args.log_level)
 
     logger.debug("Debug logging has been enabled")
     logger.debug("Command line arguments: %r", args)
