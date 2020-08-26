@@ -211,22 +211,38 @@ class Tagger:
         if m:
             return self.R128_REF - float(m.group(1)) / 256.0
 
-    def format_opus_gain(self, value):
+    def format_opus_gain(self, value, context):
         value = int((self.R128_REF - value) * 256.0)
-        if value < -32768 or value > 32767:
-            raise ValueError("Opus gain value out of range")
+        clipped_value = max(-32768, min(value, 32767))
+
+        if value != clipped_value:
+            logger.warning(
+                "%s: Clipping Opus R128 %s gain %.2f dB to %.2f dB",
+                self.filename,
+                context,
+                float(value) / 256,
+                float(clipped_value) / 256,
+            )
+            value = clipped_value
         return "{:d}".format(value)
 
-    def format_rva2_peak(self, peak):
+    def format_rva2_peak(self, peak, context):
         # mutagen expects a floating point value on linear PCM scale
         # with a maximum of 65535/32768
-        linear_peak = 10.0 ** (peak / 20.0)
-        int_peak = decimal.Decimal.from_float(peak * 32768).to_integral_value(
-            decimal.ROUND_HALF_EVEN
-        )
-        int_peak = min(int_peak, 65535)
-        linear_peak = float(int_peak) / 32768
-        return linear_peak
+        int_peak = decimal.Decimal.from_float(
+            (10.0 ** (peak / 20.0)) * 32768
+        ).to_integral_value(decimal.ROUND_HALF_EVEN)
+        if int_peak > 65535:
+            logger.warning(
+                "%s: Clipping RVA2 %s peak %.2f to %.2f",
+                self.filename,
+                context,
+                float(int_peak) / 32768,
+                65535.0 / 32768,
+            )
+            int_peak = 65535
+
+        return float(int_peak) / 32768
 
     def read_gain_id3(self):
         need_update = False
@@ -515,7 +531,7 @@ class Tagger:
         if self.id3_mode is ID3Mode.RVA2 or self.id3_mode is ID3Mode.COMPATIBLE:
             if self.tags.loudness is not None and self.tags.peak is not None:
                 gain = self.REPLAYGAIN_REF - self.tags.loudness
-                peak = self.format_rva2_peak(self.tags.peak)
+                peak = self.format_rva2_peak(self.tags.peak, "track")
                 logger.debug(
                     "Adding RVA2:track={channel=1, gain=%f, peak=%f}", gain, peak
                 )
@@ -527,7 +543,7 @@ class Tagger:
                 and self.tags.album_peak is not None
             ):
                 gain = self.REPLAYGAIN_REF - self.tags.album_loudness
-                peak = self.format_rva2_peak(self.tags.album_peak)
+                peak = self.format_rva2_peak(self.tags.album_peak, "album")
                 logger.debug(
                     "Adding RVA2:album={channel=1, gain=%f, peak=%f}", gain, peak
                 )
@@ -548,11 +564,11 @@ class Tagger:
         ):
             if self.tags.loudness is not None:
                 self.audio["R128_TRACK_GAIN"] = [
-                    self.format_opus_gain(self.tags.loudness)
+                    self.format_opus_gain(self.tags.loudness, "track")
                 ]
             if self.tags.album_loudness is not None:
                 self.audio["R128_ALBUM_GAIN"] = [
-                    self.format_opus_gain(self.tags.album_loudness)
+                    self.format_opus_gain(self.tags.album_loudness, "album")
                 ]
 
         if (
