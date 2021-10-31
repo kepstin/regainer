@@ -197,7 +197,11 @@ class Tagger:
     def parse_rg_peak(self, value):
         m = self.rg_peak_re.match(value)
         if m:
-            return 20.0 * log10(float(m.group(1)))
+            peak = float(m.group(1))
+            if peak > 0.0:
+                return 20.0 * log10(peak)
+            else:
+                return float("-inf")
         return None
 
     def format_rg_peak(self, peak):
@@ -754,7 +758,7 @@ class Tagger:
 
 class GainScanner:
     i_re = re.compile(r"^\s+I:\s+(-?\d+\.\d+) LUFS$", re.M)
-    peak_re = re.compile(r"^\s+Peak:\s+(-?\d+\.\d+) dBFS$", re.M)
+    peak_re = re.compile(r"^\s+Peak:\s+(-?(?:\d+\.\d+|inf)) dBFS$", re.M)
 
     async def ffmpeg_parse_ebur128(self, *ff_opts):
         ff_args = [
