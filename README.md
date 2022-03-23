@@ -34,7 +34,7 @@ examples:
 ```bash
 sudo cp regainer.py /usr/local/bin/regainer
 # or
-sudo ln -s /path/to/regainer.py /home/username/bin/regainer
+ln -s /path/to/regainer.py /home/username/.local/bin/regainer
 ```
 
 ## Using regainer
