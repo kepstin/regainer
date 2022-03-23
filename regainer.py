@@ -78,11 +78,13 @@ class GainInfo:
         self.album_peak = album_peak
 
     def __repr__(self):
-        return "GainInfo(loudness={}, peak={}, album_loudness={}, album_peak={})".format(
-            repr(self.loudness),
-            repr(self.peak),
-            repr(self.album_loudness),
-            repr(self.album_peak),
+        return (
+            "GainInfo(loudness={}, peak={}, album_loudness={}, album_peak={})".format(
+                repr(self.loudness),
+                repr(self.peak),
+                repr(self.album_loudness),
+                repr(self.album_peak),
+            )
         )
 
     def __str__(self):
@@ -793,7 +795,9 @@ class GainScanner:
             m = self.i_re.search(line_str)
             if m:
                 result.loudness = float(m.group(1))
-                logger.debug("GainScanner%d: Parsed loudness: %f", id(self), result.loudness)
+                logger.debug(
+                    "GainScanner%d: Parsed loudness: %f", id(self), result.loudness
+                )
             m = self.peak_re.search(line_str)
             if m:
                 result.peak = float(m.group(1))
@@ -827,7 +831,9 @@ class GainScanner:
             ff_args += ["-i", "file:" + filename]
         ff_args += [
             "-filter_complex",
-            "concat=n={}:v=0:a=1,ebur128=framelog=verbose:peak=none[out]".format(len(filenames)),
+            "concat=n={}:v=0:a=1,ebur128=framelog=verbose:peak=none[out]".format(
+                len(filenames)
+            ),
             "-map",
             "[out]",
         ]
@@ -928,7 +934,9 @@ class Album:
         await asyncio.gather(album_task, *track_tasks)
 
         self.gain.album_peak = max([t.gain.peak for t in self.tracks])
-        logger.debug("Album (%d tracks): Calculated album peak: %r", len(self.tracks), self.gain)
+        logger.debug(
+            "Album (%d tracks): Calculated album peak: %r", len(self.tracks), self.gain
+        )
         for track in self.tracks:
             track.gain.album_loudness = self.gain.album_loudness
             track.gain.album_peak = self.gain.album_peak
@@ -1099,6 +1107,7 @@ async def main(argv=None):
     tasks += [track.scan(force=args.force, skip_save=args.dry_run) for track in tracks]
 
     await asyncio.gather(*tasks)
+
 
 if __name__ == "__main__":
     asyncio.run(main(sys.argv[1:]))
