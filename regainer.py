@@ -850,7 +850,7 @@ class Track:
 
     async def read_tags(self):
         async with self.job_sem:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self.gain = await loop.run_in_executor(None, self.tagger.read_gain)
 
     async def scan_gain(self):
@@ -860,7 +860,7 @@ class Track:
 
     async def write_tags(self):
         async with self.job_sem:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self.tagger.write_gain, self.gain)
 
     async def scan(self, force=False, skip_save=False):
@@ -980,7 +980,7 @@ class Album:
                 print("Needs tag update")
 
 
-def main(argv=None):
+async def main(argv=None):
     parser = argparse.ArgumentParser(
         description="""
             Add ReplayGain tags to files using the EBU R128 algorithm.
@@ -1090,8 +1090,6 @@ def main(argv=None):
         parser.print_usage()
         sys.exit(2)
 
-    loop = asyncio.get_event_loop()
-
     job_sem = asyncio.BoundedSemaphore(args.jobs)
 
     tasks = []
@@ -1100,14 +1098,7 @@ def main(argv=None):
     tracks = [Track(track, job_sem) for track in args.track]
     tasks += [track.scan(force=args.force, skip_save=args.dry_run) for track in tracks]
 
-    future = asyncio.ensure_future(asyncio.gather(*tasks))
-
-    loop.run_until_complete(future)
-
-    future.result()
-
-    loop.close()
-
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    asyncio.run(main(sys.argv[1:]))

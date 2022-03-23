@@ -17,14 +17,13 @@ please let me know by filing an issue on Github.
 
 ## Requirements
 
-regainer is written in Python 3. It should work with Python 3.5 and any later
+regainer is written in Python 3. It should work with Python 3.7 and any later
 release. In addition to Python, you will need the following:
 
 - [mutagen](https://mutagen.readthedocs.io/), a Python library that can read
   and write tags from a wide variety of audio formats.
-- [ffmpeg](https://www.ffmpeg.org/) command line tools, preferrably version
-  4.0 or later. I use the “ebur128” filter in ffmpeg to calculate loudness
-  levels.
+- [ffmpeg](https://www.ffmpeg.org/) command line tools, version 4.0 or later.
+  I use the “ebur128” filter in ffmpeg to calculate loudness levels.
 
 ## Installation
 
