@@ -789,7 +789,7 @@ class GainScanner:
             if len(line_bytes) == 0:
                 break
 
-            line_str = line_bytes.decode().rstrip()
+            line_str = str(line_bytes, errors='replace').rstrip()
             logger.debug("GainScanner%d: ffmpeg: %s", id(self), line_str)
 
             m = self.i_re.search(line_str)
